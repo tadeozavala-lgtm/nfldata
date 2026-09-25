@@ -93,6 +93,8 @@ tbody tr:last-child td{border-bottom:0}
 .sw{width:10px;height:10px;border-radius:2px;flex:none;box-shadow:0 0 0 1px var(--rule)}
 .abbr{font-weight:700;min-width:3.2ch}
 .tname{color:var(--ink-3)}
+.confs.hist .tname{display:none}
+.confs.hist td,.confs.hist th{padding-inline:6px}
 .badge{font-size:11px;font-weight:700;letter-spacing:.03em;padding:1px 6px;border-radius:999px;background:var(--neutral-wash);color:var(--ink-2)}
 .badge.champ{background:var(--accent);color:var(--accent-ink)}
 .pos{color:var(--good)} .neg{color:var(--bad)}
@@ -134,7 +136,7 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 .pill.l{background:var(--bad-wash);color:var(--bad)}
 .pill.p{background:var(--neutral-wash);color:var(--ink-2)}
 .muted{color:var(--ink-3)}
-.log td:nth-child(3){text-align:left}
+.log:not(.st) td:nth-child(3){text-align:left}
 .log td,.log th{padding-inline:6px}
 .foot{color:var(--ink-3);font-size:13px;max-width:80ch}
 .foot code{font-size:12px}
@@ -164,7 +166,7 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
   </div>
 
   <section id="standings">
-    <div class="sec-head"><h2 id="st-title">Clasificación</h2><span class="sec-note">Temporada regular · G-P-E, puntos a favor y en contra, récord contra el spread (ATS) y over/under</span></div>
+    <div class="sec-head"><h2 id="st-title">Clasificación</h2><span class="sec-note" id="st-note"></span></div>
     <div class="confs" id="confs"></div>
   </section>
 
@@ -189,7 +191,7 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
     </div>
   </section>
 
-  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA.</p>
+  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas, y nunca entra en el histórico. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA.</p>
 </div>
 
 <script>
@@ -205,7 +207,12 @@ const lastSeason = seasons[seasons.length-1];
 const lastPlayed = games.filter(played).map(g => g.date).sort().pop();
 const lastSeasonDone = !games.some(g => g.season === lastSeason && !played(g));
 const baseSeasons = seasons.filter(s => s !== lastSeason || lastSeasonDone);
-const trendSeasons = () => seasons.filter(s => baseSeasons.includes(s) || s === state.season);
+const HIST = "hist";  // "season" value for every completed season combined
+const baseSet = new Set(baseSeasons);
+const histLabel = `Histórico ${baseSeasons[0]}–${String(baseSeasons[baseSeasons.length-1]).slice(2)}`;
+const isHist = () => state.season === HIST;
+const inSeason = g => isHist() ? baseSet.has(g.season) : g.season === state.season;
+const trendSeasons = () => isHist() ? baseSeasons : seasons.filter(s => baseSet.has(s) || s === state.season);
 
 const standMeta = {};  // season -> team -> {div, seed, playoff}
 for (const [s, div, t, seed, po] of D.s) (standMeta[s] ||= {})[t] = {div, seed, po};
@@ -225,11 +232,11 @@ const store = { get(k){ try { return localStorage.getItem("pz-"+k); } catch(e){ 
 const defSeason = lastSeasonDone ? lastSeason : lastSeason - 1;
 const champ = Object.entries(standMeta[defSeason] || {}).find(([t,m]) => m.po === "WonSB");
 const state = {
-  season: +store.get("season") || defSeason,
+  season: store.get("season") === HIST ? HIST : +store.get("season") || defSeason,
   team: store.get("team") || (champ ? fr(champ[0]) : "KC"),
   phase: store.get("phase") || "REG",
 };
-if (!seasons.includes(state.season)) state.season = defSeason;
+if (state.season !== HIST && !seasons.includes(state.season)) state.season = defSeason;
 
 // ---------- helpers ----------
 const $ = id => document.getElementById(id);
@@ -244,7 +251,7 @@ const lineTxt = v => v == null ? "—" : v === 0 ? "PK" : (v > 0 ? "+" : "−") 
 const name = t => D.n[t] || t;
 const color = t => D.c[t] || "#888";
 const inPhase = g => state.phase === "ALL" || g.type === "REG";
-const seasonLabel = s => s + (s === lastSeason && !lastSeasonDone ? " (en curso)" : "");
+const seasonLabel = s => s === HIST ? histLabel : s + (s === lastSeason && !lastSeasonDone ? " (en curso)" : "");
 
 // perspective of a franchise in a game
 function persp(g, T) {
@@ -378,14 +385,26 @@ let rz; new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimati
 function tile(label, value, sub) { return el("div", {class:"tile"}, el("div", {class:"tile-lbl", text:label}), el("div", {class:"tile-val", text:value}), sub ? el("div", {class:"tile-sub", text:sub}) : null); }
 
 // ---------- standings ----------
+// franchise totals over the completed seasons, grouped by current division
+function histMeta() {
+  const out = {};
+  for (const [t, m] of Object.entries(standMeta[lastSeason] || {})) out[fr(t)] = {div: m.div, apps: 0, titles: 0};
+  for (const s0 of baseSeasons) for (const [t, m] of Object.entries(standMeta[s0] || {})) {
+    const o = out[fr(t)]; if (!o) continue;
+    if (m.seed) o.apps++;
+    if (m.po === "WonSB") o.titles++;
+  }
+  return out;
+}
 function renderStandings() {
-  const s = state.season;
+  const s = state.season, hist = isHist();
   $("st-title").textContent = "Clasificación " + seasonLabel(s);
+  $("st-note").textContent = (hist ? "Acumulado por franquicia, sin la temporada en curso" : "Temporada regular") + " · G-P-E, puntos a favor y en contra, récord contra el spread (ATS) y over/under";
   const rec = {};
   for (const g of games) {
-    if (g.season !== s || g.type !== "REG" || !played(g)) continue;
+    if (!inSeason(g) || g.type !== "REG" || !played(g)) continue;
     for (const t of [g.home, g.away]) {
-      const r = rec[t] ||= {w:0,l:0,t:0,pf:0,pa:0,aw:0,al:0,ap:0,o:0,u:0,op:0};
+      const r = rec[hist ? fr(t) : t] ||= {w:0,l:0,t:0,pf:0,pa:0,aw:0,al:0,ap:0,o:0,u:0,op:0};
       const p = persp(g, fr(t));
       if (p.margin > 0) r.w++; else if (p.margin < 0) r.l++; else r.t++;
       r.pf += p.pts; r.pa += p.opp;
@@ -393,10 +412,10 @@ function renderStandings() {
       if (p.ou != null) { if (p.ou > 0) r.o++; else if (p.ou < 0) r.u++; else r.op++; }
     }
   }
-  const meta = standMeta[s] || {};
+  const meta = hist ? histMeta() : standMeta[s] || {};
   const divs = {};
   for (const [t, m] of Object.entries(meta)) (divs[m.div] ||= []).push({t, m, r: rec[t] || {w:0,l:0,t:0,pf:0,pa:0,aw:0,al:0,ap:0,o:0,u:0,op:0}});
-  const box = $("confs"); box.replaceChildren();
+  const box = $("confs"); box.replaceChildren(); box.classList.toggle("hist", hist);
   for (const conf of ["AFC","NFC"]) {
     const c = el("div", {class:"conf"}, el("h3", {text: conf}));
     const grid = el("div", {class:"divs"});
@@ -409,8 +428,13 @@ function renderStandings() {
       const tb = el("tbody");
       for (const {t, m, r} of rows) {
         const cell = el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(t)}`}), el("span", {class:"abbr", text:t}), el("span", {class:"tname", text: name(t).split(" ").slice(-1)[0]}));
-        if (m.seed) cell.append(el("span", {class:"badge", title:"Sembrado en playoffs", text:"#" + m.seed}));
-        if (m.po && PLAYOFF[m.po]) cell.append(el("span", {class:"badge" + (m.po === "WonSB" ? " champ" : ""), text: PLAYOFF[m.po]}));
+        if (hist) {
+          if (m.apps) cell.append(el("span", {class:"badge", title:"Temporadas con playoffs", text: m.apps + " PO"}));
+          if (m.titles) cell.append(el("span", {class:"badge champ", title:"Super Bowls ganados", text: m.titles + (m.titles > 1 ? " títulos" : " título")}));
+        } else {
+          if (m.seed) cell.append(el("span", {class:"badge", title:"Sembrado en playoffs", text:"#" + m.seed}));
+          if (m.po && PLAYOFF[m.po]) cell.append(el("span", {class:"badge" + (m.po === "WonSB" ? " champ" : ""), text: PLAYOFF[m.po]}));
+        }
         const net = r.pf - r.pa;
         const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + name(t)},
           el("td", {}, cell),
@@ -436,18 +460,23 @@ function renderStandings() {
 const bySeason = {};
 function seasonAgg(s) { const k = s + state.phase; return bySeason[k] ||= league(games.filter(g => g.season === s && inPhase(g))); }
 function renderBetting() {
-  const s = state.season, a = seasonAgg(s);
-  const base = league(games.filter(g => baseSeasons.includes(g.season) && inPhase(g)));
+  const s = state.season, hist = isHist();
+  const base = league(games.filter(g => baseSet.has(g.season) && inPhase(g)));
+  const a = hist ? base : seasonAgg(s);
   const bl = `${baseSeasons[0]}–${String(baseSeasons[baseSeasons.length-1]).slice(2)}`;
   $("bt-title").textContent = "Apuestas " + seasonLabel(s);
-  $("bt-note").textContent = `${a.n} partidos jugados · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"} · comparado con el promedio ${bl}`;
-  const dpp = (v, b) => v == null || b == null ? "" : `${signed((v-b)*100)} pts vs promedio`;
+  $("bt-note").textContent = `${a.n} partidos jugados · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"} · ` + (hist ? `${baseSeasons.length} temporadas completas` : `comparado con el promedio ${bl}`);
+  const lo_hi = f => { const v = baseSeasons.map(s0 => seasonAgg(s0)[f]).filter(x => x != null); return [Math.min(...v), Math.max(...v)]; };
+  const dpp = (v, b, f) => { if (v == null || b == null) return "";
+    if (!hist) return `${signed((v-b)*100)} pts vs promedio`;
+    const [mn, mx] = lo_hi(f); return `rango por temporada ${fmtPct(mn)}–${fmtPct(mx)}`; };
   $("bt-tiles").replaceChildren(
-    tile("Favorito gana", fmtPct(a.favWin), dpp(a.favWin, base.favWin)),
-    tile("Favorito cubre", fmtPct(a.favCover), dpp(a.favCover, base.favCover)),
-    tile("Local cubre", fmtPct(a.homeCover), dpp(a.homeCover, base.homeCover)),
-    tile("Over", fmtPct(a.over), dpp(a.over, base.over)),
-    tile("Error medio del spread", a.mae == null ? "—" : fmtNum(a.mae) + " pts", base.mae == null ? "" : `promedio ${bl}: ${fmtNum(base.mae)} pts`));
+    tile("Favorito gana", fmtPct(a.favWin), dpp(a.favWin, base.favWin, "favWin")),
+    tile("Favorito cubre", fmtPct(a.favCover), dpp(a.favCover, base.favCover, "favCover")),
+    tile("Local cubre", fmtPct(a.homeCover), dpp(a.homeCover, base.homeCover, "homeCover")),
+    tile("Over", fmtPct(a.over), dpp(a.over, base.over, "over")),
+    tile("Error medio del spread", a.mae == null ? "—" : fmtNum(a.mae) + " pts",
+      hist ? (([mn, mx]) => `rango por temporada ${fmtNum(mn)}–${fmtNum(mx)} pts`)(lo_hi("mae")) : base.mae == null ? "" : `promedio ${bl}: ${fmtNum(base.mae)} pts`));
   const xs = trendSeasons(), aggs = xs.map(seasonAgg);
   lineChart($("c-fav"), {
     title: "¿Cumplen los favoritos?",
@@ -474,14 +503,20 @@ function renderBetting() {
 
 // ---------- team ----------
 function renderTeam() {
-  const T = state.team, s = state.season;
+  const T = state.team, s = state.season, hist = isHist();
   const teamGames = s0 => games.filter(g => g.season === s0 && inPhase(g) && (fr(g.home) === T || fr(g.away) === T));
-  const list = teamGames(s).sort((a,b) => a.date.localeCompare(b.date));
-  const abbrThen = list.length ? (fr(list[0].home) === T ? list[0].home : list[0].away) : T;
+  const list = games.filter(g => inSeason(g) && inPhase(g) && (fr(g.home) === T || fr(g.away) === T)).sort((a,b) => a.date.localeCompare(b.date));
+  const abbrThen = hist || !list.length ? T : (fr(list[0].home) === T ? list[0].home : list[0].away);
+  const metaOf = s0 => Object.entries(standMeta[s0] || {}).find(([t]) => fr(t) === T)?.[1];
   $("tm-sw").style.background = color(abbrThen);
   $("tm-title").textContent = name(abbrThen);
-  const meta = (standMeta[s] || {})[abbrThen];
-  $("tm-note").textContent = [seasonLabel(s), meta && meta.div, meta && meta.po && PLAYOFF[meta.po]].filter(Boolean).join(" · ");
+  if (hist) {
+    const hm = histMeta()[T] || {};
+    $("tm-note").textContent = [seasonLabel(s), hm.div, `${hm.apps || 0} temporadas con playoffs`, hm.titles ? `${hm.titles} Super Bowl${hm.titles > 1 ? "s" : ""}` : null].filter(Boolean).join(" · ");
+  } else {
+    const meta = metaOf(s);
+    $("tm-note").textContent = [seasonLabel(s), meta && meta.div, meta && meta.po && PLAYOFF[meta.po]].filter(Boolean).join(" · ");
+  }
   const sum = gs => { const r = {w:0,l:0,t:0,aw:0,al:0,ap:0,o:0,u:0,op:0,net:0,n:0};
     for (const g of gs) { if (!played(g)) continue; const p = persp(g, T); r.n++; r.net += p.margin;
       if (p.margin > 0) r.w++; else if (p.margin < 0) r.l++; else r.t++;
@@ -504,8 +539,9 @@ function renderTeam() {
       {name:"% de victorias", short:"Victorias", color:"--s1", vals: per.map(x => x.n ? (x.w + x.t/2) / x.n : null)},
       {name:"% cubre el spread", short:"Cubre (ATS)", color:"--s2", vals: per.map(x => x.aw + x.al ? x.aw / (x.aw + x.al) : null)},
     ]});
+  const tbl = $("log"); tbl.replaceChildren(); tbl.classList.remove("st");
+  if (hist) { renderSeasonLog(tbl, xs, per, metaOf, rec3); return; }
   $("log-title").textContent = `Partidos ${seasonLabel(s)}`;
-  const tbl = $("log"); tbl.replaceChildren();
   tbl.append(el("thead", {}, el("tr", {}, ...["Sem","Fecha","Rival","Resultado","Línea","ATS","Total"].map(h => el("th", {text:h})))));
   const tb = el("tbody");
   const RND = {WC:"CM", DIV:"DIV", CON:"CONF", SB:"SB"};
@@ -526,6 +562,24 @@ function renderTeam() {
   tbl.append(tb);
 }
 
+// one row per completed season; a row opens that season
+function renderSeasonLog(tbl, xs, per, metaOf, rec3) {
+  $("log-title").textContent = "Temporada por temporada";
+  tbl.append(el("thead", {}, el("tr", {}, ...["Temp.","G-P-E","ATS","O-U","Dif","Playoffs"].map(h => el("th", {text:h})))));
+  const tb = el("tbody");
+  [...xs].reverse().forEach(s0 => { const r = per[xs.indexOf(s0)], m = metaOf(s0) || {};
+    const po = m.po && PLAYOFF[m.po] ? el("span", {class:"badge" + (m.po === "WonSB" ? " champ" : ""), text: PLAYOFF[m.po]}) : el("span", {class:"muted", text:"—"});
+    const tr = el("tr", {tabindex:"0", "aria-label": "Ver temporada " + s0},
+      el("td", {text: s0}), el("td", {text: rec3(r.w, r.l, r.t)}), el("td", {text: rec3(r.aw, r.al, r.ap)}),
+      el("td", {text: rec3(r.o, r.u, r.op)}), el("td", {class: r.net > 0 ? "pos" : r.net < 0 ? "neg" : "", text: signed(r.net, 0)}), el("td", {}, po));
+    const pick = () => setState({season: s0});
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    tb.append(tr); });
+  tbl.append(tb);
+  tbl.classList.add("st");
+}
+
 // ---------- controls ----------
 function setState(p) { Object.assign(state, p); for (const k in p) store.set(k, state[k]); render(); }
 function render() {
@@ -534,11 +588,12 @@ function render() {
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === state.phase));
   renderStandings(); renderBetting(); renderTeam();
 }
+$("f-season").append(el("option", {value:HIST, text: histLabel}));
 for (const s of [...seasons].reverse()) $("f-season").append(el("option", {value:s, text: seasonLabel(s)}));
 const current = Object.keys(standMeta[lastSeason] || {}).map(fr);
 [...new Set(current)].sort((a,b) => name(a).localeCompare(name(b), "es")).forEach(t => $("f-team").append(el("option", {value:t, text: name(t)})));
 if (!current.includes(state.team)) state.team = current[0];
-$("f-season").addEventListener("change", e => setState({season: +e.target.value}));
+$("f-season").addEventListener("change", e => setState({season: e.target.value === HIST ? HIST : +e.target.value}));
 $("f-team").addEventListener("change", e => setState({team: e.target.value}));
 document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setState({phase: b.dataset.phase})));
 const lp = new Date(lastPlayed + "T12:00:00");
