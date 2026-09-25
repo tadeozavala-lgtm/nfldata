@@ -6,7 +6,7 @@ Interactive HTML dashboard (Spanish UI) built from the CSVs in `data/`:
 - **Apuestas**: favorite win %, favorite cover %, home cover %, over % and mean spread error per season, plus trend charts for favorites and home-field advantage (actual margin vs. the market's spread).
 - **Equipo**: per-franchise win % and ATS by season and a game log with line and betting outcome.
 
-The season filter also offers **Histórico**: every completed season combined (the season in progress is left out), with franchise totals, playoff appearances and titles in the standings, the full-period betting rates with their per-season range, and a season-by-season table for the selected team.
+The season filter also offers **Histórico**: every completed season combined (the season in progress is left out), with franchise totals, playoff appearances and titles in the standings, the full-period betting rates with their per-season range, and a season-by-season table for the selected team. In that mode two more filters appear: **Ventana** limits the period to the last 5, 10, 15 or 20 completed seasons (applies to the whole page), and **Rival** isolates the selected team's head-to-head record against another franchise, with the margin of every meeting and the full game log.
 
 Covers 2002 (divisional realignment) onward. Relocated teams are grouped by franchise (OAK → LV, SD → LAC, STL → LA). Playoff results are derived from `games.csv`, because `standings.csv` leaves some finalists blank.
 

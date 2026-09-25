@@ -37,6 +37,7 @@
   --neutral-wash:rgba(180,190,185,.12);
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45;padding-inline:16px;padding-block:0 48px}
 .page{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
 h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.1}
@@ -89,6 +90,7 @@ tbody tr:last-child td{border-bottom:0}
 .st tbody tr{cursor:pointer}
 .st tbody tr:hover td{background:var(--surface-2)}
 .st tbody tr.sel td{background:var(--accent-wash)}
+.st tbody tr.sel-r td{background:var(--neutral-wash)}
 .team-cell{display:flex;align-items:center;gap:8px}
 .sw{width:10px;height:10px;border-radius:2px;flex:none;box-shadow:0 0 0 1px var(--rule)}
 .abbr{font-weight:700;min-width:3.2ch}
@@ -138,6 +140,7 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 .muted{color:var(--ink-3)}
 .log:not(.st) td:nth-child(3){text-align:left}
 .log td,.log th{padding-inline:6px}
+.plot .bar-hit{cursor:default}
 .foot{color:var(--ink-3);font-size:13px;max-width:80ch}
 .foot code{font-size:12px}
 .fade{transition:opacity .15s}
@@ -155,7 +158,11 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 
   <div class="filters" role="group" aria-label="Filtros">
     <div class="field"><label for="f-season">Temporada</label><select id="f-season"></select></div>
+    <div class="field hist-only"><label for="f-window">Ventana</label><select id="f-window">
+      <option value="0">Todo el histórico</option><option value="5">Últimos 5 años</option><option value="10">Últimos 10 años</option><option value="15">Últimos 15 años</option><option value="20">Últimos 20 años</option>
+    </select></div>
     <div class="field"><label for="f-team">Equipo</label><select id="f-team"></select></div>
+    <div class="field hist-only"><label for="f-rival">Rival</label><select id="f-rival"></select></div>
     <div class="field"><span class="lbl" id="lbl-phase">Partidos</span>
       <div class="seg" role="group" aria-labelledby="lbl-phase">
         <button type="button" data-phase="REG" aria-pressed="true">Temporada regular</button>
@@ -191,7 +198,7 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
     </div>
   </section>
 
-  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas, y nunca entra en el histórico. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA.</p>
+  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas, y nunca entra en el histórico. En el histórico, la ventana de años se aplica a toda la página y el filtro de rival muestra solo los partidos entre los dos equipos. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA.</p>
 </div>
 
 <script>
@@ -209,10 +216,12 @@ const lastSeasonDone = !games.some(g => g.season === lastSeason && !played(g));
 const baseSeasons = seasons.filter(s => s !== lastSeason || lastSeasonDone);
 const HIST = "hist";  // "season" value for every completed season combined
 const baseSet = new Set(baseSeasons);
-const histLabel = `Histórico ${baseSeasons[0]}–${String(baseSeasons[baseSeasons.length-1]).slice(2)}`;
+const span = ss => `${ss[0]}–${String(ss[ss.length-1]).slice(2)}`;
 const isHist = () => state.season === HIST;
-const inSeason = g => isHist() ? baseSet.has(g.season) : g.season === state.season;
-const trendSeasons = () => isHist() ? baseSeasons : seasons.filter(s => baseSet.has(s) || s === state.season);
+// completed seasons inside the chosen window (0 = all of them)
+const histSeasons = () => state.window ? baseSeasons.slice(-state.window) : baseSeasons;
+const inSeason = g => isHist() ? histSeasons().includes(g.season) : g.season === state.season;
+const trendSeasons = () => isHist() ? histSeasons() : seasons.filter(s => baseSet.has(s) || s === state.season);
 
 const standMeta = {};  // season -> team -> {div, seed, playoff}
 for (const [s, div, t, seed, po] of D.s) (standMeta[s] ||= {})[t] = {div, seed, po};
@@ -235,6 +244,8 @@ const state = {
   season: store.get("season") === HIST ? HIST : +store.get("season") || defSeason,
   team: store.get("team") || (champ ? fr(champ[0]) : "KC"),
   phase: store.get("phase") || "REG",
+  window: [5,10,15,20].includes(+store.get("window")) ? +store.get("window") : 0,
+  rival: store.get("rival") || "",
 };
 if (state.season !== HIST && !seasons.includes(state.season)) state.season = defSeason;
 
@@ -251,7 +262,7 @@ const lineTxt = v => v == null ? "—" : v === 0 ? "PK" : (v > 0 ? "+" : "−") 
 const name = t => D.n[t] || t;
 const color = t => D.c[t] || "#888";
 const inPhase = g => state.phase === "ALL" || g.type === "REG";
-const seasonLabel = s => s === HIST ? histLabel : s + (s === lastSeason && !lastSeasonDone ? " (en curso)" : "");
+const seasonLabel = s => s === HIST ? `Histórico ${span(histSeasons())}` : s + (s === lastSeason && !lastSeasonDone ? " (en curso)" : "");
 
 // perspective of a franchise in a game
 function persp(g, T) {
@@ -379,6 +390,69 @@ function lineChart(host, cfg) {
   draw();
   charts.push({plot, draw});
 }
+function barChart(host, cfg) {
+  host.replaceChildren();
+  host.append(el("h3", {text: cfg.title}));
+  if (cfg.desc) host.append(el("p", {class:"chart-desc", text: cfg.desc}));
+  const legend = el("div", {class:"legend"});
+  for (const s of cfg.legend) legend.append(el("span", {}, el("i", {class:"key", style:`color:var(${s.color});border-top-width:8px;width:10px;border-radius:2px`}), document.createTextNode(s.name)));
+  host.append(legend);
+  const plot = el("div", {class:"plot"}); host.append(plot);
+  if (!cfg.items.length) { plot.style.minHeight = "0"; plot.append(el("p", {class:"muted", text: cfg.empty})); return; }
+  const tip = el("div", {class:"tip", hidden:""});
+  const NS = "http://www.w3.org/2000/svg";
+  const sv = (tag, a={}) => { const e = document.createElementNS(NS, tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k, v); return e; };
+  const items = cfg.items, n = items.length;
+  function draw() {
+    plot.replaceChildren();
+    const W = Math.max(280, plot.clientWidth || 600), H = 250, m = {t:14, r:10, b:26, l:42};
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const mx = Math.max(7, ...items.map(d => Math.abs(d.v)));
+    const step = mx > 28 ? 14 : 7, top = Math.ceil(mx / step) * step;
+    const Y = v => m.t + ih/2 - v / top * ih/2;
+    const band = iw / n, bw = Math.max(2, Math.min(26, band - 2));
+    const X = i => m.l + band * (i + .5);
+    const svg = sv("svg", {viewBox:`0 0 ${W} ${H}`, width:W, height:H, tabindex:"0", role:"img", "aria-label": cfg.title + ". Usa las flechas para recorrer los partidos."});
+    for (let v = -top; v <= top; v += step) {
+      svg.append(sv("line", {x1:m.l, x2:m.l+iw, y1:Y(v), y2:Y(v), stroke: v === 0 ? "var(--ink-3)" : "var(--rule-2)", "stroke-width":1}));
+      const tx = sv("text", {x:m.l-8, y:Y(v)+4, "text-anchor":"end"}); tx.textContent = v > 0 ? "+" + v : v < 0 ? "−" + Math.abs(v) : "0"; svg.append(tx);
+    }
+    // season ticks: first meeting of each season, skipping labels that would collide
+    let lastX = -1e9;
+    items.forEach((d, i) => { if (i && items[i-1].g.season === d.g.season) return; if (X(i) - lastX < 30) return;
+      lastX = X(i); const tx = sv("text", {x:X(i), y:H-6, "text-anchor":"middle"}); tx.textContent = "’" + String(d.g.season).slice(2); svg.append(tx); });
+    const bars = items.map((d, i) => {
+      const y0 = Y(0), y1 = Y(d.v), h = Math.max(2, Math.abs(y1 - y0));
+      const r = sv("rect", {x:X(i)-bw/2, y: d.v >= 0 ? y0 - h : y0, width:bw, height:h, rx: Math.min(4, bw/2),
+        fill: d.v > 0 ? "var(--s1)" : d.v < 0 ? "var(--s2)" : "var(--ink-3)"});
+      svg.append(r); return r; });
+    const hits = items.map((d, i) => { const h = sv("rect", {x:X(i)-band/2, y:m.t, width:band, height:ih, fill:"transparent", class:"bar-hit"}); svg.append(h); return h; });
+    let idx = null;
+    function show(i) {
+      if (idx != null) bars[idx].removeAttribute("opacity");
+      idx = i; if (i == null) { tip.hidden = true; return; }
+      bars.forEach((b, k) => b.setAttribute("opacity", k === i ? "1" : ".45"));
+      const {g, p} = items[i];
+      const d = new Date(g.date + "T12:00:00").toLocaleDateString("es", {day:"numeric", month:"short", year:"numeric"});
+      tip.replaceChildren(el("div", {class:"t-h", text: `${d} · ${g.type === "REG" ? "Semana " + g.week : RND[g.type]}`}),
+        el("div", {class:"t-r"}, el("b", {text: signed(p.margin, 0)}), document.createTextNode(`${p.home ? "vs" : "@"} ${p.oppTeam}, ${p.pts}-${p.opp}`)),
+        el("div", {class:"t-r"}, el("b", {text: lineTxt(p.line)}), document.createTextNode(p.ats == null ? "línea" : p.ats > 0 ? "línea · cubrió" : p.ats < 0 ? "línea · no cubrió" : "línea · push")));
+      tip.hidden = false;
+      const tw = tip.offsetWidth; let left = X(i) + band/2 + 6; if (left + tw > W) left = X(i) - band/2 - 6 - tw;
+      tip.style.left = Math.max(0, left) + "px"; tip.style.top = m.t + "px";
+    }
+    hits.forEach((h, i) => h.addEventListener("pointerenter", () => show(i)));
+    svg.addEventListener("pointerleave", () => { show(null); bars.forEach(b => b.removeAttribute("opacity")); });
+    svg.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault();
+      show(Math.max(0, Math.min(n-1, (idx == null ? n-1 : idx) + (e.key === "ArrowRight" ? 1 : -1)))); } });
+    svg.addEventListener("focus", () => show(n-1));
+    svg.addEventListener("blur", () => { show(null); bars.forEach(b => b.removeAttribute("opacity")); });
+    plot.append(svg, tip);
+  }
+  draw();
+  charts.push({plot, draw});
+}
+
 let rz; new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => charts.forEach(c => c.draw())); }).observe(document.querySelector(".page"));
 
 // ---------- tiles ----------
@@ -389,7 +463,7 @@ function tile(label, value, sub) { return el("div", {class:"tile"}, el("div", {c
 function histMeta() {
   const out = {};
   for (const [t, m] of Object.entries(standMeta[lastSeason] || {})) out[fr(t)] = {div: m.div, apps: 0, titles: 0};
-  for (const s0 of baseSeasons) for (const [t, m] of Object.entries(standMeta[s0] || {})) {
+  for (const s0 of histSeasons()) for (const [t, m] of Object.entries(standMeta[s0] || {})) {
     const o = out[fr(t)]; if (!o) continue;
     if (m.seed) o.apps++;
     if (m.po === "WonSB") o.titles++;
@@ -399,7 +473,7 @@ function histMeta() {
 function renderStandings() {
   const s = state.season, hist = isHist();
   $("st-title").textContent = "Clasificación " + seasonLabel(s);
-  $("st-note").textContent = (hist ? "Acumulado por franquicia, sin la temporada en curso" : "Temporada regular") + " · G-P-E, puntos a favor y en contra, récord contra el spread (ATS) y over/under";
+  $("st-note").textContent = (hist ? `Acumulado por franquicia en ${histSeasons().length} temporadas completas` : "Temporada regular") + " · G-P-E, puntos a favor y en contra, récord contra el spread (ATS) y over/under";
   const rec = {};
   for (const g of games) {
     if (!inSeason(g) || g.type !== "REG" || !played(g)) continue;
@@ -444,7 +518,8 @@ function renderStandings() {
           el("td", {text:`${r.aw}-${r.al}` + (r.ap ? `-${r.ap}` : "")}),
           el("td", {text:`${r.o}-${r.u}` + (r.op ? `-${r.op}` : "")}));
         if (fr(t) === state.team) tr.classList.add("sel");
-        const pick = () => { setState({team: fr(t)}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
+        else if (hist && fr(t) === state.rival) tr.classList.add("sel-r");
+        const pick = () => { setState({team: fr(t), ...(fr(t) === state.rival ? {rival: ""} : {})}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
         tr.addEventListener("click", pick);
         tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
         tb.append(tr);
@@ -462,11 +537,11 @@ function seasonAgg(s) { const k = s + state.phase; return bySeason[k] ||= league
 function renderBetting() {
   const s = state.season, hist = isHist();
   const base = league(games.filter(g => baseSet.has(g.season) && inPhase(g)));
-  const a = hist ? base : seasonAgg(s);
+  const a = hist ? league(games.filter(g => inSeason(g) && inPhase(g))) : seasonAgg(s);
   const bl = `${baseSeasons[0]}–${String(baseSeasons[baseSeasons.length-1]).slice(2)}`;
   $("bt-title").textContent = "Apuestas " + seasonLabel(s);
-  $("bt-note").textContent = `${a.n} partidos jugados · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"} · ` + (hist ? `${baseSeasons.length} temporadas completas` : `comparado con el promedio ${bl}`);
-  const lo_hi = f => { const v = baseSeasons.map(s0 => seasonAgg(s0)[f]).filter(x => x != null); return [Math.min(...v), Math.max(...v)]; };
+  $("bt-note").textContent = `${a.n} partidos jugados · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"} · ` + (hist ? `${histSeasons().length} temporadas completas` : `comparado con el promedio ${bl}`);
+  const lo_hi = f => { const v = histSeasons().map(s0 => seasonAgg(s0)[f]).filter(x => x != null); return [Math.min(...v), Math.max(...v)]; };
   const dpp = (v, b, f) => { if (v == null || b == null) return "";
     if (!hist) return `${signed((v-b)*100)} pts vs promedio`;
     const [mn, mx] = lo_hi(f); return `rango por temporada ${fmtPct(mn)}–${fmtPct(mx)}`; };
@@ -505,12 +580,18 @@ function renderBetting() {
 function renderTeam() {
   const T = state.team, s = state.season, hist = isHist();
   const teamGames = s0 => games.filter(g => g.season === s0 && inPhase(g) && (fr(g.home) === T || fr(g.away) === T));
-  const list = games.filter(g => inSeason(g) && inPhase(g) && (fr(g.home) === T || fr(g.away) === T)).sort((a,b) => a.date.localeCompare(b.date));
+  const R = hist ? state.rival : "";
+  const list = games.filter(g => inSeason(g) && inPhase(g) && (fr(g.home) === T || fr(g.away) === T)
+    && (!R || fr(g.home) === R || fr(g.away) === R)).sort((a,b) => a.date.localeCompare(b.date));
   const abbrThen = hist || !list.length ? T : (fr(list[0].home) === T ? list[0].home : list[0].away);
   const metaOf = s0 => Object.entries(standMeta[s0] || {}).find(([t]) => fr(t) === T)?.[1];
   $("tm-sw").style.background = color(abbrThen);
-  $("tm-title").textContent = name(abbrThen);
-  if (hist) {
+  $("tm-title").textContent = name(abbrThen) + (R ? " vs " + name(R) : "");
+  if (R) {
+    const done = list.filter(played), last = done[done.length-1];
+    $("tm-note").textContent = [seasonLabel(s), `${done.length} enfrentamientos`,
+      last ? "último: " + new Date(last.date + "T12:00:00").toLocaleDateString("es", {day:"numeric", month:"short", year:"numeric"}) : null].filter(Boolean).join(" · ");
+  } else if (hist) {
     const hm = histMeta()[T] || {};
     $("tm-note").textContent = [seasonLabel(s), hm.div, `${hm.apps || 0} temporadas con playoffs`, hm.titles ? `${hm.titles} Super Bowl${hm.titles > 1 ? "s" : ""}` : null].filter(Boolean).join(" · ");
   } else {
@@ -529,6 +610,7 @@ function renderTeam() {
     tile("Contra el spread", rec3(r.aw, r.al, r.ap), r.aw + r.al ? `cubre el ${fmtPct(pct(r.aw, r.aw + r.al))}` : ""),
     tile("Over / Under", rec3(r.o, r.u, r.op), r.o + r.u ? `over en el ${fmtPct(pct(r.o, r.o + r.u))}` : ""),
     tile("Diferencia de puntos", signed(r.net, 0), r.n ? `${signed(r.net / r.n)} por partido` : ""));
+  if (R) { renderRivalry(list.filter(played), T, R); return; }
   const xs = trendSeasons(), per = xs.map(s0 => sum(teamGames(s0)));
   lineChart($("c-team"), {
     title: "Victorias y spread por temporada",
@@ -544,21 +626,41 @@ function renderTeam() {
   $("log-title").textContent = `Partidos ${seasonLabel(s)}`;
   tbl.append(el("thead", {}, el("tr", {}, ...["Sem","Fecha","Rival","Resultado","Línea","ATS","Total"].map(h => el("th", {text:h})))));
   const tb = el("tbody");
-  const RND = {WC:"CM", DIV:"DIV", CON:"CONF", SB:"SB"};
-  for (const g of list) {
+  for (const g of list) tb.append(gameRow(g, T, false));
+  if (!list.length) tb.append(el("tr", {}, el("td", {colspan:"7", class:"muted", text:"Sin partidos en esta temporada."})));
+  tbl.append(tb);
+}
+
+const RND = {WC:"CM", DIV:"DIV", CON:"CONF", SB:"SB"};
+function gameRow(g, T, withYear) {
     const p = persp(g, T), done = played(g);
     const d = new Date(g.date + "T12:00:00");
     const res = done ? el("span", {}, el("span", {class:"pill " + (p.margin > 0 ? "w" : p.margin < 0 ? "l" : "p"), text: p.margin > 0 ? "G" : p.margin < 0 ? "P" : "E"}), document.createTextNode(` ${p.pts}-${p.opp}` + (g.ot ? " (TE)" : ""))) : el("span", {class:"muted", text:"Pendiente"});
     const ats = p.ats == null ? el("span", {class:"muted", text:"—"}) : el("span", {class:"pill " + (p.ats > 0 ? "w" : p.ats < 0 ? "l" : "p"), text: p.ats > 0 ? "Cubre" : p.ats < 0 ? "No" : "Push"});
     const ou = p.ou == null ? el("span", {class:"muted", text:"—"}) : el("span", {class:"pill p", text: p.ou > 0 ? "Over" : p.ou < 0 ? "Under" : "Push"});
-    tb.append(el("tr", {},
-      el("td", {text: g.type === "REG" ? g.week : RND[g.type]}),
+    return el("tr", {},
+      el("td", {text: (withYear ? g.season + " · " : "") + (g.type === "REG" ? g.week : RND[g.type])}),
       el("td", {text: d.toLocaleDateString("es", {day:"numeric", month:"short"})}),
       el("td", {title: name(p.oppTeam), text: (g.neutral ? "vs* " : p.home ? "vs " : "@ ") + p.oppTeam}),
       el("td", {}, res), el("td", {text: lineTxt(p.line)}), el("td", {}, ats),
-      el("td", {}, document.createTextNode(g.total == null ? "—" : String(g.total).replace(".", ",") + " "), p.ou == null ? null : ou)));
-  }
-  if (!list.length) tb.append(el("tr", {}, el("td", {colspan:"7", class:"muted", text:"Sin partidos en esta temporada."})));
+      el("td", {}, document.createTextNode(g.total == null ? "—" : String(g.total).replace(".", ",") + " "), p.ou == null ? null : ou));
+}
+
+// head-to-head: margin of every meeting plus the full game log
+function renderRivalry(list, T, R) {
+  const items = list.map(g => { const p = persp(g, T); return {g, p, v: p.margin}; });
+  barChart($("c-team"), {
+    title: "Margen en cada enfrentamiento",
+    desc: `Puntos de diferencia para ${name(T)}, del más antiguo al más reciente. Hacia arriba ganó, hacia abajo perdió.`,
+    items, empty: "Sin enfrentamientos en esta ventana.",
+    legend: [{name:"Ganó " + T, color:"--s1"}, {name:"Ganó " + R, color:"--s2"}],
+  });
+  $("log-title").textContent = "Enfrentamientos";
+  const tbl = $("log"); tbl.replaceChildren(); tbl.classList.remove("st");
+  tbl.append(el("thead", {}, el("tr", {}, ...["Temp. · Sem","Fecha","Rival","Resultado","Línea","ATS","Total"].map(h => el("th", {text:h})))));
+  const tb = el("tbody");
+  for (const g of [...list].reverse()) tb.append(gameRow(g, T, true));
+  if (!list.length) tb.append(el("tr", {}, el("td", {colspan:"7", class:"muted", text:"Sin enfrentamientos en esta ventana."})));
   tbl.append(tb);
 }
 
@@ -584,17 +686,25 @@ function renderSeasonLog(tbl, xs, per, metaOf, rec3) {
 function setState(p) { Object.assign(state, p); for (const k in p) store.set(k, state[k]); render(); }
 function render() {
   charts.length = 0;
-  $("f-season").value = state.season; $("f-team").value = state.team;
+  const hist = isHist();
+  document.querySelectorAll(".hist-only").forEach(f => f.hidden = !hist);
+  const rv = $("f-rival"); rv.replaceChildren(el("option", {value:"", text:"Todos los rivales"}));
+  teamList.filter(t => t !== state.team).forEach(t => rv.append(el("option", {value:t, text: name(t)})));
+  $("f-season").value = state.season; $("f-team").value = state.team; rv.value = state.rival; $("f-window").value = state.window;
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === state.phase));
   renderStandings(); renderBetting(); renderTeam();
 }
-$("f-season").append(el("option", {value:HIST, text: histLabel}));
+$("f-season").append(el("option", {value:HIST, text: "Histórico"}));
 for (const s of [...seasons].reverse()) $("f-season").append(el("option", {value:s, text: seasonLabel(s)}));
 const current = Object.keys(standMeta[lastSeason] || {}).map(fr);
-[...new Set(current)].sort((a,b) => name(a).localeCompare(name(b), "es")).forEach(t => $("f-team").append(el("option", {value:t, text: name(t)})));
+const teamList = [...new Set(current)].sort((a,b) => name(a).localeCompare(name(b), "es"));
+teamList.forEach(t => $("f-team").append(el("option", {value:t, text: name(t)})));
 if (!current.includes(state.team)) state.team = current[0];
+if (state.rival && (!current.includes(state.rival) || state.rival === state.team)) state.rival = "";
 $("f-season").addEventListener("change", e => setState({season: e.target.value === HIST ? HIST : +e.target.value}));
-$("f-team").addEventListener("change", e => setState({team: e.target.value}));
+$("f-team").addEventListener("change", e => setState({team: e.target.value, ...(e.target.value === state.rival ? {rival: ""} : {})}));
+$("f-rival").addEventListener("change", e => setState({rival: e.target.value}));
+$("f-window").addEventListener("change", e => setState({window: +e.target.value}));
 document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setState({phase: b.dataset.phase})));
 const lp = new Date(lastPlayed + "T12:00:00");
 $("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
