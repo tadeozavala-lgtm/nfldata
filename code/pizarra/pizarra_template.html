@@ -1,0 +1,547 @@
+<title>Pizarra NFL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+:root{
+  --bg:#eef1ed; --surface:#fbfcfa; --surface-2:#f3f6f2;
+  --ink:#13201a; --ink-2:#46534c; --ink-3:#66736c; --rule:#d5ddd6; --rule-2:#e4e9e4;
+  --accent:#1d6b45; --accent-ink:#ffffff; --accent-wash:rgba(29,107,69,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a;
+  --good:#12761e; --good-wash:rgba(12,163,12,.12);
+  --bad:#b93030; --bad-wash:rgba(208,59,59,.12);
+  --neutral-wash:rgba(90,100,95,.12);
+  --display:"Saira Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0e1311; --surface:#161c19; --surface-2:#1c2420;
+    --ink:#eef3ef; --ink-2:#b9c4bd; --ink-3:#8f9b94; --rule:#2c3731; --rule-2:#232c27;
+    --accent:#5cc48d; --accent-ink:#0e1311; --accent-wash:rgba(92,196,141,.14);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+    --good:#4fcf5a; --good-wash:rgba(12,163,12,.20);
+    --bad:#ef7b7b; --bad-wash:rgba(208,59,59,.22);
+    --neutral-wash:rgba(180,190,185,.12);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0e1311; --surface:#161c19; --surface-2:#1c2420;
+  --ink:#eef3ef; --ink-2:#b9c4bd; --ink-3:#8f9b94; --rule:#2c3731; --rule-2:#232c27;
+  --accent:#5cc48d; --accent-ink:#0e1311; --accent-wash:rgba(92,196,141,.14);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --good:#4fcf5a; --good-wash:rgba(12,163,12,.20);
+  --bad:#ef7b7b; --bad-wash:rgba(208,59,59,.22);
+  --neutral-wash:rgba(180,190,185,.12);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45;padding-inline:16px;padding-block:0 48px}
+.page{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.1}
+.num,td,th,.tile-val{font-variant-numeric:tabular-nums}
+
+/* header */
+header.top{padding-top:28px;display:flex;flex-direction:column;gap:6px}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+h1{font-size:clamp(34px,6vw,52px);font-weight:700;text-transform:uppercase;letter-spacing:.01em}
+.lede{color:var(--ink-2);max-width:65ch;margin:0}
+.yardline{height:14px;margin-top:10px;
+  background:
+    linear-gradient(var(--rule),var(--rule)) left bottom/100% 2px no-repeat,
+    repeating-linear-gradient(90deg,var(--rule) 0 2px,transparent 2px 10%) left bottom/100% 14px no-repeat,
+    repeating-linear-gradient(90deg,var(--rule-2) 0 1px,transparent 1px 2%) left bottom/100% 7px no-repeat;}
+
+/* filters */
+.filters{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:10px;display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end;border-bottom:1px solid var(--rule)}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label,.field .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+select{font:inherit;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:7px 30px 7px 10px;min-width:0;max-width:100%;appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
+  background-position:calc(100% - 15px) 55%,calc(100% - 10px) 55%;background-size:5px 5px;background-repeat:no-repeat;cursor:pointer}
+select:focus-visible,button:focus-visible,tr[tabindex]:focus-visible,svg:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button{font:inherit;font-weight:600;font-size:14px;border:0;background:transparent;color:var(--ink-2);padding:7px 12px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.stamp{margin-left:auto;font-size:13px;color:var(--ink-3)}
+
+/* sections */
+section{display:flex;flex-direction:column;gap:14px}
+.sec-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
+h2{font-size:28px;font-weight:700;text-transform:uppercase;letter-spacing:.01em}
+.sec-note{color:var(--ink-3);font-size:14px}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:16px}
+
+/* standings */
+.confs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:16px}
+.conf{display:flex;flex-direction:column;gap:10px}
+.conf h3{font-size:20px;font-weight:700;letter-spacing:.04em}
+.divs{display:grid;grid-template-columns:1fr;gap:10px}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+caption{text-align:left;font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2);padding-bottom:4px}
+th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);font-weight:600;text-align:right;padding:4px 8px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--rule-2);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+.st tbody tr{cursor:pointer}
+.st tbody tr:hover td{background:var(--surface-2)}
+.st tbody tr.sel td{background:var(--accent-wash)}
+.team-cell{display:flex;align-items:center;gap:8px}
+.sw{width:10px;height:10px;border-radius:2px;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.abbr{font-weight:700;min-width:3.2ch}
+.tname{color:var(--ink-3)}
+.badge{font-size:11px;font-weight:700;letter-spacing:.03em;padding:1px 6px;border-radius:999px;background:var(--neutral-wash);color:var(--ink-2)}
+.badge.champ{background:var(--accent);color:var(--accent-ink)}
+.pos{color:var(--good)} .neg{color:var(--bad)}
+
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.tile-lbl{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.tile-val{font-family:var(--display);font-size:34px;font-weight:700;line-height:1.05}
+.tile-sub{font-size:13px;color:var(--ink-2)}
+
+/* charts */
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:16px}
+.chart-card{display:flex;flex-direction:column;gap:8px;min-width:0}
+.chart-card h3{font-size:19px;font-weight:600}
+.chart-desc{margin:0;color:var(--ink-2);font-size:14px;max-width:65ch}
+.legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.key{display:inline-block;width:16px;height:0;border-top:2px solid currentColor;border-radius:2px}
+.plot{position:relative;min-height:260px}
+.plot svg{display:block;width:100%;height:auto;overflow:visible}
+.plot text{font-family:var(--body);font-size:11px;fill:var(--ink-3)}
+.plot .dl{font-size:12px;fill:var(--ink-2);font-weight:600}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:8px 10px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.12);min-width:150px;z-index:3}
+.tip .t-h{font-weight:700;margin-bottom:4px;color:var(--ink)}
+.tip .t-r{display:flex;align-items:center;gap:8px;color:var(--ink-3)}
+.tip .t-r b{color:var(--ink);font-weight:700;min-width:5ch;text-align:right}
+details.tv summary{cursor:pointer;font-size:13px;color:var(--ink-3);font-weight:600}
+details.tv table{margin-top:6px;font-size:13px}
+details.tv .tbl-wrap{max-height:260px;overflow:auto}
+
+/* team */
+.team-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.team-head .big-sw{width:22px;height:22px;border-radius:4px;box-shadow:0 0 0 1px var(--rule)}
+.team-head h2{font-size:30px}
+.team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:16px;align-items:start}
+.pill{display:inline-block;font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;min-width:2.6em;text-align:center}
+.pill.w{background:var(--good-wash);color:var(--good)}
+.pill.l{background:var(--bad-wash);color:var(--bad)}
+.pill.p{background:var(--neutral-wash);color:var(--ink-2)}
+.muted{color:var(--ink-3)}
+.log td:nth-child(3){text-align:left}
+.log td,.log th{padding-inline:6px}
+.foot{color:var(--ink-3);font-size:13px;max-width:80ch}
+.foot code{font-size:12px}
+.fade{transition:opacity .15s}
+@media (prefers-reduced-motion:reduce){.fade{transition:none}}
+@media (max-width:560px){ .tname{display:none} .stamp{margin-left:0;width:100%} h2{font-size:24px} }
+</style>
+
+<div class="page">
+  <header class="top">
+    <div class="eyebrow">nflverse · nfldata</div>
+    <h1>Pizarra NFL</h1>
+    <p class="lede">Clasificación, tendencias de apuestas y rendimiento por equipo desde la realineación de 2002, calculados partido a partido con <code>games.csv</code>. Haz clic en cualquier equipo de la clasificación para ver su detalle.</p>
+    <div class="yardline" aria-hidden="true"></div>
+  </header>
+
+  <div class="filters" role="group" aria-label="Filtros">
+    <div class="field"><label for="f-season">Temporada</label><select id="f-season"></select></div>
+    <div class="field"><label for="f-team">Equipo</label><select id="f-team"></select></div>
+    <div class="field"><span class="lbl" id="lbl-phase">Partidos</span>
+      <div class="seg" role="group" aria-labelledby="lbl-phase">
+        <button type="button" data-phase="REG" aria-pressed="true">Temporada regular</button>
+        <button type="button" data-phase="ALL" aria-pressed="false">Con playoffs</button>
+      </div>
+    </div>
+    <div class="stamp" id="stamp"></div>
+  </div>
+
+  <section id="standings">
+    <div class="sec-head"><h2 id="st-title">Clasificación</h2><span class="sec-note">Temporada regular · G-P-E, puntos a favor y en contra, récord contra el spread (ATS) y over/under</span></div>
+    <div class="confs" id="confs"></div>
+  </section>
+
+  <section id="betting">
+    <div class="sec-head"><h2 id="bt-title">Apuestas</h2><span class="sec-note" id="bt-note"></span></div>
+    <div class="tiles" id="bt-tiles"></div>
+    <div class="charts">
+      <div class="panel chart-card" id="c-fav"></div>
+      <div class="panel chart-card" id="c-home"></div>
+    </div>
+  </section>
+
+  <section id="team">
+    <div class="team-head"><span class="big-sw" id="tm-sw"></span><h2 id="tm-title">Equipo</h2><span class="sec-note" id="tm-note"></span></div>
+    <div class="tiles" id="tm-tiles"></div>
+    <div class="team-grid">
+      <div class="panel chart-card" id="c-team"></div>
+      <div class="panel chart-card">
+        <h3 id="log-title">Partidos</h3>
+        <div class="tbl-wrap"><table class="log" id="log"></table></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA.</p>
+</div>
+
+<script>
+const D = __DATA__;
+const FR = {OAK:"LV", SD:"LAC", STL:"LA"};
+const fr = t => FR[t] || t;
+const PLAYOFF = {WonSB:"Campeón", LostSB:"Perdió SB", LostCC:"Final conf.", LostDV:"Divisional", LostWC:"Comodín"};
+
+const games = D.g.map(a => ({season:a[0], type:a[1], week:a[2], date:a[3], away:a[4], as:a[5], home:a[6], hs:a[7], spread:a[8], total:a[9], neutral:a[10], ot:a[11]}));
+const played = g => g.hs != null && g.as != null;
+const seasons = [...new Set(games.map(g => g.season))].sort((a,b) => a-b);
+const lastSeason = seasons[seasons.length-1];
+const lastPlayed = games.filter(played).map(g => g.date).sort().pop();
+const lastSeasonDone = !games.some(g => g.season === lastSeason && !played(g));
+const baseSeasons = seasons.filter(s => s !== lastSeason || lastSeasonDone);
+const trendSeasons = () => seasons.filter(s => baseSeasons.includes(s) || s === state.season);
+
+const standMeta = {};  // season -> team -> {div, seed, playoff}
+for (const [s, div, t, seed, po] of D.s) (standMeta[s] ||= {})[t] = {div, seed, po};
+// playoff outcome derived from the games themselves (standings.csv leaves some finalists blank)
+const LOST = {WC:"LostWC", DIV:"LostDV", CON:"LostCC", SB:"LostSB"};
+for (const g of games) {
+  if (g.type === "REG" || !played(g) || g.hs === g.as) continue;
+  const [win, lose] = g.hs > g.as ? [g.home, g.away] : [g.away, g.home];
+  const m = standMeta[g.season] || {};
+  if (m[lose]) m[lose].po = LOST[g.type];
+  if (g.type === "SB" && m[win]) m[win].po = "WonSB";
+}
+
+// ---------- state ----------
+const store = { get(k){ try { return localStorage.getItem("pz-"+k); } catch(e){ return null; } },
+                set(k,v){ try { localStorage.setItem("pz-"+k, v); } catch(e){} } };
+const defSeason = lastSeasonDone ? lastSeason : lastSeason - 1;
+const champ = Object.entries(standMeta[defSeason] || {}).find(([t,m]) => m.po === "WonSB");
+const state = {
+  season: +store.get("season") || defSeason,
+  team: store.get("team") || (champ ? fr(champ[0]) : "KC"),
+  phase: store.get("phase") || "REG",
+};
+if (!seasons.includes(state.season)) state.season = defSeason;
+
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+const el = (tag, attrs={}, ...kids) => { const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)) { if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
+  for (const c of kids) if (c != null) e.append(c); return e; };
+const pct = (a, b) => b ? a / b : null;
+const fmtPct = v => v == null ? "—" : (v*100).toFixed(1).replace(".", ",") + "%";
+const fmtNum = (v, d=1) => v == null ? "—" : v.toFixed(d).replace(".", ",").replace(/^-/, "−");
+const signed = (v, d=1) => v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v).toFixed(d).replace(".", ",");
+const lineTxt = v => v == null ? "—" : v === 0 ? "PK" : (v > 0 ? "+" : "−") + String(Math.abs(v)).replace(".", ",");
+const name = t => D.n[t] || t;
+const color = t => D.c[t] || "#888";
+const inPhase = g => state.phase === "ALL" || g.type === "REG";
+const seasonLabel = s => s + (s === lastSeason && !lastSeasonDone ? " (en curso)" : "");
+
+// perspective of a franchise in a game
+function persp(g, T) {
+  const home = fr(g.home) === T;
+  const pts = home ? g.hs : g.as, opp = home ? g.as : g.hs;
+  const line = g.spread == null ? null : (home ? -g.spread : g.spread);
+  const r = played(g) ? { pts, opp, margin: pts - opp } : {};
+  if (played(g) && line != null) r.ats = (pts - opp) + line;
+  if (played(g) && g.total != null) r.ou = (pts + opp) - g.total;
+  return { home, oppTeam: home ? g.away : g.home, line, ...r };
+}
+
+// league betting aggregates for a list of games
+function league(list) {
+  let fw=0, fn=0, fc=0, fcn=0, hc=0, hcn=0, ov=0, ovn=0, err=0, errn=0, hm=0, hs=0, hn=0, n=0;
+  for (const g of list) {
+    if (!played(g)) continue; n++;
+    const res = g.hs - g.as;
+    if (g.spread != null) {
+      const ats = res - g.spread;
+      if (g.spread !== 0 && res !== 0) { fn++; if (Math.sign(res) === Math.sign(g.spread)) fw++; }
+      if (g.spread !== 0 && ats !== 0) { fcn++; if (Math.sign(ats) === Math.sign(g.spread)) fc++; }
+      if (!g.neutral && ats !== 0) { hcn++; if (ats > 0) hc++; }
+      err += Math.abs(ats); errn++;
+      if (!g.neutral) { hm += res; hs += g.spread; hn++; }
+    }
+    if (g.total != null) { const d = g.hs + g.as - g.total; if (d !== 0) { ovn++; if (d > 0) ov++; } }
+  }
+  return { n, favWin: pct(fw,fn), favCover: pct(fc,fcn), homeCover: pct(hc,hcn), over: pct(ov,ovn),
+           mae: errn ? err/errn : null, homeMargin: hn ? hm/hn : null, homeSpread: hn ? hs/hn : null };
+}
+
+// ---------- line chart ----------
+const charts = [];
+function lineChart(host, cfg) {
+  host.replaceChildren();
+  host.append(el("h3", {text: cfg.title}));
+  if (cfg.desc) host.append(el("p", {class:"chart-desc", text: cfg.desc}));
+  const legend = el("div", {class:"legend"});
+  for (const s of cfg.series) legend.append(el("span", {}, el("i", {class:"key", style:`color:var(${s.color})`}), document.createTextNode(s.name)));
+  host.append(legend);
+  const plot = el("div", {class:"plot"}); host.append(plot);
+  const tip = el("div", {class:"tip", hidden:""});
+  // table view
+  const det = el("details", {class:"tv"}, el("summary", {text:"Ver tabla"}));
+  const tbl = el("table"); const thr = el("tr", {}, el("th", {text:"Temporada"}));
+  cfg.series.forEach(s => thr.append(el("th", {text:s.name})));
+  tbl.append(el("thead", {}, thr)); const tb = el("tbody");
+  cfg.xs.forEach((x,i) => { const tr = el("tr", {}, el("td", {text: seasonLabel(x)}));
+    cfg.series.forEach(s => tr.append(el("td", {text: cfg.fmt(s.vals[i])}))); tb.append(tr); });
+  tbl.append(tb); det.append(el("div", {class:"tbl-wrap"}, tbl)); host.append(det);
+
+  const NS = "http://www.w3.org/2000/svg";
+  const sv = (tag, a={}) => { const e = document.createElementNS(NS, tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k, v); return e; };
+  let idx = null;
+  function draw() {
+    plot.replaceChildren();
+    const W = Math.max(280, plot.clientWidth || 600), H = 260;
+    const wide = W >= 520;
+    const m = {t:14, r: wide ? 118 : 14, b:26, l:42};
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const xs = cfg.xs, n = xs.length;
+    const X = i => m.l + (n === 1 ? iw/2 : i * iw / (n-1));
+    const Y = v => m.t + ih - (v - cfg.yMin) / (cfg.yMax - cfg.yMin) * ih;
+    const svg = sv("svg", {viewBox:`0 0 ${W} ${H}`, width:W, height:H, tabindex:"0", role:"img", "aria-label": cfg.title + ". Usa las flechas para recorrer las temporadas."});
+    // grid
+    for (let v = cfg.yMin; v <= cfg.yMax + 1e-9; v += cfg.yStep) {
+      svg.append(sv("line", {x1:m.l, x2:m.l+iw, y1:Y(v), y2:Y(v), stroke:"var(--rule-2)", "stroke-width":1}));
+      const t = sv("text", {x:m.l-8, y:Y(v)+4, "text-anchor":"end"}); t.textContent = cfg.axisFmt(v); svg.append(t);
+    }
+    if (cfg.ref != null) svg.append(sv("line", {x1:m.l, x2:m.l+iw, y1:Y(cfg.ref), y2:Y(cfg.ref), stroke:"var(--ink-3)", "stroke-width":1, "stroke-dasharray":"3 3"}));
+    // x ticks
+    const every = iw / n < 22 ? (iw / n < 12 ? 6 : 4) : 2;
+    xs.forEach((x,i) => { if (i % every === 0 || i === n-1) {
+      if (i === n-1 && i % every !== 0 && (i % every) < every/2) return;
+      const t = sv("text", {x:X(i), y:H-6, "text-anchor":"middle"}); t.textContent = "’" + String(x).slice(2); svg.append(t); } });
+    // selected-season band
+    const hi = xs.indexOf(cfg.hx);
+    if (hi >= 0) { const bw = Math.max(8, iw/(n-1||1)); svg.append(sv("rect", {x:X(hi)-bw/2, y:m.t, width:bw, height:ih, fill:"var(--accent-wash)"})); }
+    // lines
+    for (const s of cfg.series) {
+      let d = "", pen = false;
+      s.vals.forEach((v,i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + X(i).toFixed(1) + "," + Y(v).toFixed(1); pen = true; });
+      svg.append(sv("path", {d, fill:"none", stroke:`var(${s.color})`, "stroke-width":2, "stroke-linejoin":"round", "stroke-linecap":"round"}));
+    }
+    // emphasized dots at selected season
+    if (hi >= 0) for (const s of cfg.series) { const v = s.vals[hi]; if (v == null) continue;
+      svg.append(sv("circle", {cx:X(hi), cy:Y(v), r:4.5, fill:`var(${s.color})`, stroke:"var(--surface)", "stroke-width":2})); }
+    // direct labels at line ends (wide only)
+    if (wide) {
+      const ends = cfg.series.map(s => { let i = s.vals.length-1; while (i >= 0 && s.vals[i] == null) i--; return {s, i, y: i >= 0 ? Y(s.vals[i]) : null}; }).filter(e => e.y != null).sort((a,b) => a.y - b.y);
+      for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k-1].y < 15) ends[k].y = ends[k-1].y + 15;
+      for (const e of ends) {
+        svg.append(sv("line", {x1:X(n-1)+6, x2:X(n-1)+16, y1:e.y, y2:e.y, stroke:`var(${e.s.color})`, "stroke-width":2, "stroke-linecap":"round"}));
+        const t = sv("text", {x:X(n-1)+20, y:e.y+4, class:"dl"}); t.textContent = e.s.short || e.s.name; svg.append(t);
+      }
+    }
+    // hover layer
+    const cross = sv("line", {y1:m.t, y2:m.t+ih, stroke:"var(--ink-3)", "stroke-width":1, visibility:"hidden"});
+    const dots = cfg.series.map(s => sv("circle", {r:4, fill:`var(${s.color})`, stroke:"var(--surface)", "stroke-width":2, visibility:"hidden"}));
+    svg.append(cross, ...dots);
+    const hit = sv("rect", {x:m.l-10, y:0, width:iw+20, height:H, fill:"transparent"});
+    svg.append(hit);
+    function show(i) {
+      idx = i; if (i == null) { tip.hidden = true; cross.setAttribute("visibility","hidden"); dots.forEach(d => d.setAttribute("visibility","hidden")); return; }
+      cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility","visible");
+      cfg.series.forEach((s,k) => { const v = s.vals[i]; if (v == null) { dots[k].setAttribute("visibility","hidden"); return; }
+        dots[k].setAttribute("cx", X(i)); dots[k].setAttribute("cy", Y(v)); dots[k].setAttribute("visibility","visible"); });
+      tip.replaceChildren(el("div", {class:"t-h", text: seasonLabel(xs[i]) + (cfg.nOf ? " · " + cfg.nOf(i) : "")}));
+      cfg.series.forEach(s => tip.append(el("div", {class:"t-r"}, el("i", {class:"key", style:`color:var(${s.color})`}), el("b", {text: cfg.fmt(s.vals[i])}), document.createTextNode(s.name))));
+      tip.hidden = false;
+      const tw = tip.offsetWidth; let left = X(i) + 14; if (left + tw > W) left = X(i) - 14 - tw;
+      tip.style.left = Math.max(0, left) + "px"; tip.style.top = m.t + "px";
+    }
+    const nearest = evt => { const r = svg.getBoundingClientRect(); const px = (evt.clientX - r.left) * W / r.width;
+      return Math.max(0, Math.min(n-1, Math.round((px - m.l) / (iw/(n-1||1))))); };
+    hit.addEventListener("pointermove", e => show(nearest(e)));
+    hit.addEventListener("pointerleave", () => show(null));
+    svg.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault();
+      const cur = idx == null ? (hi >= 0 ? hi : n-1) : idx; show(Math.max(0, Math.min(n-1, cur + (e.key === "ArrowRight" ? 1 : -1)))); } });
+    svg.addEventListener("focus", () => show(hi >= 0 ? hi : n-1));
+    svg.addEventListener("blur", () => show(null));
+    plot.append(svg, tip);
+  }
+  draw();
+  charts.push({plot, draw});
+}
+let rz; new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => charts.forEach(c => c.draw())); }).observe(document.querySelector(".page"));
+
+// ---------- tiles ----------
+function tile(label, value, sub) { return el("div", {class:"tile"}, el("div", {class:"tile-lbl", text:label}), el("div", {class:"tile-val", text:value}), sub ? el("div", {class:"tile-sub", text:sub}) : null); }
+
+// ---------- standings ----------
+function renderStandings() {
+  const s = state.season;
+  $("st-title").textContent = "Clasificación " + seasonLabel(s);
+  const rec = {};
+  for (const g of games) {
+    if (g.season !== s || g.type !== "REG" || !played(g)) continue;
+    for (const t of [g.home, g.away]) {
+      const r = rec[t] ||= {w:0,l:0,t:0,pf:0,pa:0,aw:0,al:0,ap:0,o:0,u:0,op:0};
+      const p = persp(g, fr(t));
+      if (p.margin > 0) r.w++; else if (p.margin < 0) r.l++; else r.t++;
+      r.pf += p.pts; r.pa += p.opp;
+      if (p.ats != null) { if (p.ats > 0) r.aw++; else if (p.ats < 0) r.al++; else r.ap++; }
+      if (p.ou != null) { if (p.ou > 0) r.o++; else if (p.ou < 0) r.u++; else r.op++; }
+    }
+  }
+  const meta = standMeta[s] || {};
+  const divs = {};
+  for (const [t, m] of Object.entries(meta)) (divs[m.div] ||= []).push({t, m, r: rec[t] || {w:0,l:0,t:0,pf:0,pa:0,aw:0,al:0,ap:0,o:0,u:0,op:0}});
+  const box = $("confs"); box.replaceChildren();
+  for (const conf of ["AFC","NFC"]) {
+    const c = el("div", {class:"conf"}, el("h3", {text: conf}));
+    const grid = el("div", {class:"divs"});
+    for (const dir of ["East","North","South","West"]) {
+      const dn = conf + " " + dir, rows = divs[dn] || [];
+      const wp = r => (r.w + r.t/2) / Math.max(1, r.w + r.l + r.t);
+      rows.sort((a,b) => wp(b.r) - wp(a.r) || (b.r.pf-b.r.pa) - (a.r.pf-a.r.pa));
+      const tbl = el("table", {class:"st"}, el("caption", {text: dn}));
+      tbl.append(el("thead", {}, el("tr", {}, ...["Equipo","G-P-E","PF","PC","Dif","ATS","O-U"].map(h => el("th", {text:h})))));
+      const tb = el("tbody");
+      for (const {t, m, r} of rows) {
+        const cell = el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(t)}`}), el("span", {class:"abbr", text:t}), el("span", {class:"tname", text: name(t).split(" ").slice(-1)[0]}));
+        if (m.seed) cell.append(el("span", {class:"badge", title:"Sembrado en playoffs", text:"#" + m.seed}));
+        if (m.po && PLAYOFF[m.po]) cell.append(el("span", {class:"badge" + (m.po === "WonSB" ? " champ" : ""), text: PLAYOFF[m.po]}));
+        const net = r.pf - r.pa;
+        const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + name(t)},
+          el("td", {}, cell),
+          el("td", {class:"num", text:`${r.w}-${r.l}` + (r.t ? `-${r.t}` : "")}),
+          el("td", {text:r.pf}), el("td", {text:r.pa}),
+          el("td", {class: net > 0 ? "pos" : net < 0 ? "neg" : "", text: signed(net, 0)}),
+          el("td", {text:`${r.aw}-${r.al}` + (r.ap ? `-${r.ap}` : "")}),
+          el("td", {text:`${r.o}-${r.u}` + (r.op ? `-${r.op}` : "")}));
+        if (fr(t) === state.team) tr.classList.add("sel");
+        const pick = () => { setState({team: fr(t)}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
+        tr.addEventListener("click", pick);
+        tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+        tb.append(tr);
+      }
+      tbl.append(tb);
+      grid.append(el("div", {class:"panel tbl-wrap"}, tbl));
+    }
+    c.append(grid); box.append(c);
+  }
+}
+
+// ---------- betting ----------
+const bySeason = {};
+function seasonAgg(s) { const k = s + state.phase; return bySeason[k] ||= league(games.filter(g => g.season === s && inPhase(g))); }
+function renderBetting() {
+  const s = state.season, a = seasonAgg(s);
+  const base = league(games.filter(g => baseSeasons.includes(g.season) && inPhase(g)));
+  const bl = `${baseSeasons[0]}–${String(baseSeasons[baseSeasons.length-1]).slice(2)}`;
+  $("bt-title").textContent = "Apuestas " + seasonLabel(s);
+  $("bt-note").textContent = `${a.n} partidos jugados · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"} · comparado con el promedio ${bl}`;
+  const dpp = (v, b) => v == null || b == null ? "" : `${signed((v-b)*100)} pts vs promedio`;
+  $("bt-tiles").replaceChildren(
+    tile("Favorito gana", fmtPct(a.favWin), dpp(a.favWin, base.favWin)),
+    tile("Favorito cubre", fmtPct(a.favCover), dpp(a.favCover, base.favCover)),
+    tile("Local cubre", fmtPct(a.homeCover), dpp(a.homeCover, base.homeCover)),
+    tile("Over", fmtPct(a.over), dpp(a.over, base.over)),
+    tile("Error medio del spread", a.mae == null ? "—" : fmtNum(a.mae) + " pts", base.mae == null ? "" : `promedio ${bl}: ${fmtNum(base.mae)} pts`));
+  const xs = trendSeasons(), aggs = xs.map(seasonAgg);
+  lineChart($("c-fav"), {
+    title: "¿Cumplen los favoritos?",
+    desc: "Porcentaje por temporada. La línea punteada marca el 50%: ahí una apuesta a ciegas no gana ni pierde antes de la comisión.",
+    xs, hx: s, yMin: .3, yMax: .8, yStep: .1, ref: .5,
+    axisFmt: v => Math.round(v*100) + "%", fmt: fmtPct, nOf: i => aggs[i].n + " partidos",
+    series: [
+      {name:"Favorito gana", short:"Fav. gana", color:"--s1", vals: aggs.map(x => x.favWin)},
+      {name:"Favorito cubre", short:"Fav. cubre", color:"--s2", vals: aggs.map(x => x.favCover)},
+      {name:"Over", short:"Over", color:"--s3", vals: aggs.map(x => x.over)},
+    ]});
+  const hv = aggs.flatMap(x => [x.homeMargin, x.homeSpread]).filter(v => v != null);
+  const lo = Math.min(-1, Math.floor(Math.min(...hv))), hiV = Math.max(4, Math.ceil(Math.max(...hv)));
+  lineChart($("c-home"), {
+    title: "Ventaja de local: real contra mercado",
+    desc: "Margen medio del equipo local frente al spread medio que le daban las casas, en puntos. Sin partidos en campo neutral.",
+    xs, hx: s, yMin: lo, yMax: hiV, yStep: 1, ref: 0,
+    axisFmt: v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v), fmt: v => v == null ? "—" : signed(v) + " pts", nOf: i => aggs[i].n + " partidos",
+    series: [
+      {name:"Margen real del local", short:"Real", color:"--s1", vals: aggs.map(x => x.homeMargin)},
+      {name:"Spread medio del local", short:"Mercado", color:"--s2", vals: aggs.map(x => x.homeSpread)},
+    ]});
+}
+
+// ---------- team ----------
+function renderTeam() {
+  const T = state.team, s = state.season;
+  const teamGames = s0 => games.filter(g => g.season === s0 && inPhase(g) && (fr(g.home) === T || fr(g.away) === T));
+  const list = teamGames(s).sort((a,b) => a.date.localeCompare(b.date));
+  const abbrThen = list.length ? (fr(list[0].home) === T ? list[0].home : list[0].away) : T;
+  $("tm-sw").style.background = color(abbrThen);
+  $("tm-title").textContent = name(abbrThen);
+  const meta = (standMeta[s] || {})[abbrThen];
+  $("tm-note").textContent = [seasonLabel(s), meta && meta.div, meta && meta.po && PLAYOFF[meta.po]].filter(Boolean).join(" · ");
+  const sum = gs => { const r = {w:0,l:0,t:0,aw:0,al:0,ap:0,o:0,u:0,op:0,net:0,n:0};
+    for (const g of gs) { if (!played(g)) continue; const p = persp(g, T); r.n++; r.net += p.margin;
+      if (p.margin > 0) r.w++; else if (p.margin < 0) r.l++; else r.t++;
+      if (p.ats != null) { if (p.ats > 0) r.aw++; else if (p.ats < 0) r.al++; else r.ap++; }
+      if (p.ou != null) { if (p.ou > 0) r.o++; else if (p.ou < 0) r.u++; else r.op++; } } return r; };
+  const r = sum(list);
+  const rec3 = (a,b,c) => `${a}-${b}` + (c ? `-${c}` : "");
+  $("tm-tiles").replaceChildren(
+    tile("Récord", rec3(r.w, r.l, r.t), r.n ? `${fmtPct(pct(r.w + r.t/2, r.n))} de victorias` : "Sin partidos jugados"),
+    tile("Contra el spread", rec3(r.aw, r.al, r.ap), r.aw + r.al ? `cubre el ${fmtPct(pct(r.aw, r.aw + r.al))}` : ""),
+    tile("Over / Under", rec3(r.o, r.u, r.op), r.o + r.u ? `over en el ${fmtPct(pct(r.o, r.o + r.u))}` : ""),
+    tile("Diferencia de puntos", signed(r.net, 0), r.n ? `${signed(r.net / r.n)} por partido` : ""));
+  const xs = trendSeasons(), per = xs.map(s0 => sum(teamGames(s0)));
+  lineChart($("c-team"), {
+    title: "Victorias y spread por temporada",
+    desc: "Porcentaje de victorias y de partidos en los que cubrió la línea. Por encima del 50% en ATS, el equipo rindió más de lo que esperaba el mercado.",
+    xs, hx: s, yMin: 0, yMax: 1, yStep: .25, ref: .5,
+    axisFmt: v => Math.round(v*100) + "%", fmt: fmtPct, nOf: i => rec3(per[i].w, per[i].l, per[i].t),
+    series: [
+      {name:"% de victorias", short:"Victorias", color:"--s1", vals: per.map(x => x.n ? (x.w + x.t/2) / x.n : null)},
+      {name:"% cubre el spread", short:"Cubre (ATS)", color:"--s2", vals: per.map(x => x.aw + x.al ? x.aw / (x.aw + x.al) : null)},
+    ]});
+  $("log-title").textContent = `Partidos ${seasonLabel(s)}`;
+  const tbl = $("log"); tbl.replaceChildren();
+  tbl.append(el("thead", {}, el("tr", {}, ...["Sem","Fecha","Rival","Resultado","Línea","ATS","Total"].map(h => el("th", {text:h})))));
+  const tb = el("tbody");
+  const RND = {WC:"CM", DIV:"DIV", CON:"CONF", SB:"SB"};
+  for (const g of list) {
+    const p = persp(g, T), done = played(g);
+    const d = new Date(g.date + "T12:00:00");
+    const res = done ? el("span", {}, el("span", {class:"pill " + (p.margin > 0 ? "w" : p.margin < 0 ? "l" : "p"), text: p.margin > 0 ? "G" : p.margin < 0 ? "P" : "E"}), document.createTextNode(` ${p.pts}-${p.opp}` + (g.ot ? " (TE)" : ""))) : el("span", {class:"muted", text:"Pendiente"});
+    const ats = p.ats == null ? el("span", {class:"muted", text:"—"}) : el("span", {class:"pill " + (p.ats > 0 ? "w" : p.ats < 0 ? "l" : "p"), text: p.ats > 0 ? "Cubre" : p.ats < 0 ? "No" : "Push"});
+    const ou = p.ou == null ? el("span", {class:"muted", text:"—"}) : el("span", {class:"pill p", text: p.ou > 0 ? "Over" : p.ou < 0 ? "Under" : "Push"});
+    tb.append(el("tr", {},
+      el("td", {text: g.type === "REG" ? g.week : RND[g.type]}),
+      el("td", {text: d.toLocaleDateString("es", {day:"numeric", month:"short"})}),
+      el("td", {title: name(p.oppTeam), text: (g.neutral ? "vs* " : p.home ? "vs " : "@ ") + p.oppTeam}),
+      el("td", {}, res), el("td", {text: lineTxt(p.line)}), el("td", {}, ats),
+      el("td", {}, document.createTextNode(g.total == null ? "—" : String(g.total).replace(".", ",") + " "), p.ou == null ? null : ou)));
+  }
+  if (!list.length) tb.append(el("tr", {}, el("td", {colspan:"7", class:"muted", text:"Sin partidos en esta temporada."})));
+  tbl.append(tb);
+}
+
+// ---------- controls ----------
+function setState(p) { Object.assign(state, p); for (const k in p) store.set(k, state[k]); render(); }
+function render() {
+  charts.length = 0;
+  $("f-season").value = state.season; $("f-team").value = state.team;
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === state.phase));
+  renderStandings(); renderBetting(); renderTeam();
+}
+for (const s of [...seasons].reverse()) $("f-season").append(el("option", {value:s, text: seasonLabel(s)}));
+const current = Object.keys(standMeta[lastSeason] || {}).map(fr);
+[...new Set(current)].sort((a,b) => name(a).localeCompare(name(b), "es")).forEach(t => $("f-team").append(el("option", {value:t, text: name(t)})));
+if (!current.includes(state.team)) state.team = current[0];
+$("f-season").addEventListener("change", e => setState({season: +e.target.value}));
+$("f-team").addEventListener("change", e => setState({team: e.target.value}));
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setState({phase: b.dataset.phase})));
+const lp = new Date(lastPlayed + "T12:00:00");
+$("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
+render();
+</script>
