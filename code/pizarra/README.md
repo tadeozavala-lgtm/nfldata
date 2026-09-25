@@ -18,3 +18,5 @@ python3 code/pizarra/build_pizarra.py -o out.html
 ```
 
 The output is a single self-contained page (~450 KB, data embedded) that opens in any browser. It is git-ignored; rebuild it after each data update.
+
+The `Build Pizarra NFL dashboard` workflow (`.github/workflows/build_pizarra.yml`) rebuilds it whenever `games.csv`, `standings.csv`, `teams.csv`, `teamcolors.csv` or this folder change, and can also be run by hand. Download the page from the run's `pizarra-nfl` artifact (kept 30 days).

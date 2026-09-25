@@ -1,0 +1,35 @@
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "data/games.csv"
+      - "data/standings.csv"
+      - "data/teams.csv"
+      - "data/teamcolors.csv"
+      - "code/pizarra/**"
+      - ".github/workflows/build_pizarra.yml"
+
+name: Build Pizarra NFL dashboard
+permissions: read-all
+
+jobs:
+  build_pizarra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build dashboard
+        run: python3 code/pizarra/build_pizarra.py -o pizarra-nfl.html
+
+      - name: Upload dashboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: pizarra-nfl
+          path: pizarra-nfl.html
+          retention-days: 30
