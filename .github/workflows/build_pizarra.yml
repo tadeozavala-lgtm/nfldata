@@ -1,0 +1,42 @@
+on:
+  workflow_dispatch:
+  # player stats and injury reports live in nflverse releases, not in this
+  # repo, so they need a schedule rather than a push trigger
+  schedule:
+    - cron: "17 13 * * *"
+  push:
+    paths:
+      - "data/games.csv"
+      - "data/standings.csv"
+      - "data/teams.csv"
+      - "data/teamcolors.csv"
+      - "code/pizarra/**"
+      - ".github/workflows/build_pizarra.yml"
+
+name: Build Pizarra NFL dashboard
+permissions: read-all
+
+jobs:
+  build_pizarra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install nflreadpy
+        run: pip install "nflreadpy>=0.1.5,<0.2"
+
+      - name: Build dashboard
+        run: python3 code/pizarra/build_pizarra.py -o pizarra-nfl.html
+
+      - name: Upload dashboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: pizarra-nfl
+          path: pizarra-nfl.html
+          retention-days: 30
