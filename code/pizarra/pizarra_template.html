@@ -11,6 +11,7 @@
   --good:#12761e; --good-wash:rgba(12,163,12,.12);
   --bad:#b93030; --bad-wash:rgba(208,59,59,.12);
   --neutral-wash:rgba(90,100,95,.12);
+  --warn:#8a5a00; --warn-wash:rgba(250,178,25,.20);
   --display:"Saira Condensed","Arial Narrow",system-ui,sans-serif;
   --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
 }
@@ -24,6 +25,7 @@
     --good:#4fcf5a; --good-wash:rgba(12,163,12,.20);
     --bad:#ef7b7b; --bad-wash:rgba(208,59,59,.22);
     --neutral-wash:rgba(180,190,185,.12);
+    --warn:#ffcf66; --warn-wash:rgba(250,178,25,.18);
   }
 }
 :root[data-theme="dark"]{
@@ -35,6 +37,7 @@
   --good:#4fcf5a; --good-wash:rgba(12,163,12,.20);
   --bad:#ef7b7b; --bad-wash:rgba(208,59,59,.22);
   --neutral-wash:rgba(180,190,185,.12);
+  --warn:#ffcf66; --warn-wash:rgba(250,178,25,.18);
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -141,6 +144,29 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 .log:not(.st) td:nth-child(3){text-align:left}
 .log td,.log th{padding-inline:6px}
 .plot .bar-hit{cursor:default}
+.inj{font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.inj.q{background:var(--warn-wash);color:var(--warn)}
+.inj.out{background:var(--bad-wash);color:var(--bad)}
+.panel-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-bottom:10px}
+.panel-head h3{font-size:21px;font-weight:600}
+.prop-form{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:end;margin-bottom:12px}
+.prop-form .grow{flex:1 1 240px}
+.prop-form .narrow input{width:7.5em}
+input[type=number],input[list],textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:7px 10px;max-width:100%;width:100%}
+textarea{display:block;margin-block:8px;font-size:14px}
+input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btn{font:inherit;font-weight:600;font-size:14px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:7px 14px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.form-msg{font-size:13px;color:var(--bad)}
+details.bulk{margin-bottom:12px}
+.del{font:inherit;font-size:18px;line-height:1;border:0;background:transparent;color:var(--ink-3);cursor:pointer;padding:2px 6px;border-radius:4px}
+.del:hover{background:var(--bad-wash);color:var(--bad)}
+.props-t td:nth-child(2){text-align:left;white-space:normal}
+.splits{margin-bottom:12px}
+#tm-players-grid{grid-template-columns:1fr}
+#pdetail{display:flex;flex-direction:column;gap:12px}
+#pdetail .tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .foot{color:var(--ink-3);font-size:13px;max-width:80ch}
 .foot code{font-size:12px}
 .fade{transition:opacity .15s}
@@ -196,9 +222,20 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
         <div class="tbl-wrap"><table class="log" id="log"></table></div>
       </div>
     </div>
+    <div class="team-grid" id="tm-players-grid">
+      <div class="panel chart-card" id="tm-players"></div>
+      <div class="panel chart-card" id="tm-defense"></div>
+    </div>
   </section>
 
-  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas, y nunca entra en el histórico. En el histórico, la ventana de años se aplica a toda la página y el filtro de rival muestra solo los partidos entre los dos equipos. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA.</p>
+  <section id="players">
+    <div class="sec-head"><h2>Props de jugadores</h2><span class="sec-note" id="pl-note"></span></div>
+    <div class="panel" id="props"></div>
+    <div class="panel" id="pdetail"></div>
+    <datalist id="pl-list"></datalist>
+  </section>
+
+  <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas, y nunca entra en el histórico. En el histórico, la ventana de años se aplica a toda la página y el filtro de rival muestra solo los partidos entre los dos equipos. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA. Estadísticas de jugador y reporte de lesiones: nflverse, cargados con <code>nflreadpy</code>. Las líneas de props las escribes tú; los porcentajes de over son históricos, no incluyen la comisión de la casa y con pocos partidos la muestra es pequeña.</p>
 </div>
 
 <script>
@@ -246,6 +283,9 @@ const state = {
   phase: store.get("phase") || "REG",
   window: [5,10,15,20].includes(+store.get("window")) ? +store.get("window") : 0,
   rival: store.get("rival") || "",
+  player: store.get("player") || "",
+  pmarket: store.get("pmarket") || "",
+  pline: null,
 };
 if (state.season !== HIST && !seasons.includes(state.season)) state.season = defSeason;
 
@@ -682,8 +722,419 @@ function renderSeasonLog(tbl, xs, per, metaOf, rec3) {
   tbl.classList.add("st");
 }
 
+// ---------- players ----------
+const PD = D.p;
+const COLS = PD ? PD.cols : [];
+const POS = ["QB", "RB", "WR", "TE"];
+const players = PD ? PD.pl.map(([id, nm, pos], i) => ({i, id, nm, pos, rows: []})) : [];
+const plRows = [];
+if (PD) {
+  for (const a of PD.r) {
+    const r = {p: players[a[0]], g: games[a[1]], team: a[2], opp: a[3]};
+    COLS.forEach((c, k) => r[c] = a[4 + k]);
+    r.ts = a[4 + COLS.length]; r.ays = a[5 + COLS.length];
+    r.p.rows.push(r); plRows.push(r);
+  }
+  for (const p of players) {
+    p.rows.sort((x, y) => x.g.date.localeCompare(y.g.date));
+    const last = p.rows[p.rows.length - 1];
+    p.team = last.team; p.last = last.g.date;
+  }
+}
+const playerById = Object.fromEntries(players.map(p => [p.id, p]));
+const PL_FIRST = PD ? Math.min(...plRows.map(r => r.g.season)) : null;
+const CUR = PD ? PD.cur : lastSeason;
+
+// prop markets: which positions they apply to and how the per-game value is read
+const MK = {
+  passing_yards:  {name:"Yardas de pase", pos:["QB"], f: r => r.passing_yards},
+  passing_tds:    {name:"TD de pase", pos:["QB"], f: r => r.passing_tds},
+  completions:    {name:"Pases completos", pos:["QB"], f: r => r.completions},
+  attempts:       {name:"Intentos de pase", pos:["QB"], f: r => r.attempts},
+  interceptions:  {name:"Intercepciones", pos:["QB"], f: r => r.passing_interceptions},
+  pass_rush:      {name:"Yardas de pase + tierra", pos:["QB"], f: r => r.passing_yards + r.rushing_yards},
+  rushing_yards:  {name:"Yardas por tierra", pos:["QB","RB","WR"], f: r => r.rushing_yards},
+  carries:        {name:"Acarreos", pos:["QB","RB"], f: r => r.carries},
+  receptions:     {name:"Recepciones", pos:["RB","WR","TE"], f: r => r.receptions},
+  receiving_yards:{name:"Yardas de recepción", pos:["RB","WR","TE"], f: r => r.receiving_yards},
+  rush_rec:       {name:"Yardas tierra + recepción", pos:["RB","WR","TE"], f: r => r.rushing_yards + r.receiving_yards},
+  anytime_td:     {name:"TD en cualquier momento", pos:["QB","RB","WR","TE"], f: r => r.rushing_tds + r.receiving_tds},
+};
+const DEF_MK = {QB:"passing_yards", RB:"rushing_yards", WR:"receiving_yards", TE:"receiving_yards"};
+const marketsFor = pos => Object.keys(MK).filter(k => MK[k].pos.includes(pos));
+const mkByName = s => { const q = s.trim().toLowerCase(); return Object.keys(MK).find(k => k === q || MK[k].name.toLowerCase() === q)
+  || Object.keys(MK).find(k => MK[k].name.toLowerCase().startsWith(q)); };
+
+// injury report tag (latest report of the player's team)
+const INJ_ES = {Knee:"Rodilla", Ankle:"Tobillo", Hamstring:"Isquiotibial", Groin:"Ingle", Toe:"Dedo del pie", Foot:"Pie", Shoulder:"Hombro",
+  Concussion:"Conmoción", Back:"Espalda", Hip:"Cadera", Calf:"Pantorrilla", Quadricep:"Cuádriceps", Wrist:"Muñeca", Hand:"Mano",
+  Illness:"Enfermedad", Chest:"Pecho", Ribs:"Costillas", Elbow:"Codo", Neck:"Cuello", Thumb:"Pulgar", Finger:"Dedo", Achilles:"Aquiles",
+  Abdomen:"Abdomen", Oblique:"Oblicuo", Heel:"Talón", Shin:"Espinilla", Pectoral:"Pectoral", "Not injury related":"Sin lesión"};
+const INJ_STATUS = {Out:"Fuera", Doubtful:"Dudoso", Questionable:"Cuestionable"};
+function injTag(p) {
+  const x = PD && PD.inj[p.i]; if (!x) return null;
+  const [st, part, prac, wk] = x;
+  const label = INJ_STATUS[st] || (prac && /Did Not/.test(prac) ? "No entrenó" : "Entrenó limitado");
+  const body = part ? (INJ_ES[part] || part) : "";
+  return el("span", {class: "inj " + (st === "Out" || st === "Doubtful" ? "out" : "q"),
+    title: `Reporte de lesiones, semana ${wk}` + (prac ? ` · práctica: ${prac}` : ""), text: label + (body ? " · " + body : "")});
+}
+
+// next scheduled game of each franchise
+const nextGame = {};
+for (const g of games) if (!played(g) && g.date >= lastPlayed)
+  for (const t of [fr(g.home), fr(g.away)]) if (!nextGame[t] || g.date < nextGame[t].date) nextGame[t] = g;
+const oppIn = (g, T) => fr(g.home) === T ? g.away : g.home;
+const dateShort = d => new Date(d + "T12:00:00").toLocaleDateString("es", {day:"numeric", month:"short"});
+
+// ---- defense vs position: per-game production allowed and league rank (1 = allows the least)
+function sumInto(s, r) { for (const c of COLS) s[c] = (s[c] || 0) + r[c]; }
+function rankDefense(out) {
+  for (const pos of POS) {
+    const mk = DEF_MK[pos];
+    const list = Object.entries(out).filter(([, d]) => d.n).map(([t, d]) => [t, (d.pos[pos]?.[mk] || 0) / d.n]).sort((a, b) => a[1] - b[1]);
+    list.forEach(([t], k) => { out[t].rank ||= {}; out[t].rank[pos] = k + 1; });
+    out.__count = list.length;
+  }
+  return out;
+}
+function defAllowed(inScope) {
+  const out = {};
+  for (const g of games) if (played(g) && g.season >= PL_FIRST && inScope(g))
+    for (const t of [fr(g.home), fr(g.away)]) (out[t] ||= {n:0, pos:{}}).n++;
+  for (const r of plRows) { if (!inScope(r.g)) continue; const d = out[fr(r.opp)]; if (d) sumInto(d.pos[r.p.pos] ||= {}, r); }
+  return rankDefense(out);
+}
+// each defense's own last 10 games: what the props list uses for the next opponent
+const recentDef = PD ? (() => {
+  const byT = {};
+  for (const g of games) if (played(g) && g.season >= PL_FIRST) for (const t of [fr(g.home), fr(g.away)]) (byT[t] ||= []).push(g);
+  const sets = {}, out = {};
+  for (const t in byT) { byT[t].sort((a, b) => a.date.localeCompare(b.date)); sets[t] = new Set(byT[t].slice(-10)); out[t] = {n: sets[t].size, pos:{}}; }
+  for (const r of plRows) { const t = fr(r.opp); if (sets[t]?.has(r.g)) sumInto(out[t].pos[r.p.pos] ||= {}, r); }
+  return rankDefense(out);
+})() : {};
+const defPerGame = (d, pos, mk) => d && d.n ? (d.pos[pos]?.[mk] || 0) / d.n : null;
+const DEF_LABEL = {QB:"yds de pase", RB:"yds por tierra", WR:"yds de recepción", TE:"yds de recepción"};
+
+// ---- hit rates
+const pRows = p => p.rows.filter(r => inPhase(r.g));
+function hits(rows, mk, line) {
+  let o = 0, u = 0, pu = 0, sum = 0;
+  for (const r of rows) { const v = MK[mk].f(r); sum += v; if (v > line) o++; else if (v < line) u++; else pu++; }
+  return {o, u, pu, n: rows.length, avg: rows.length ? sum / rows.length : null};
+}
+const hitTxt = h => h.n ? `${h.o}/${h.n}` : "—";
+const hitPct = h => h.n ? fmtPct(h.o / h.n) : "";
+const median = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2; };
+const suggestLine = (p, mk) => mk === "anytime_td" ? 0.5 : Math.floor(median(pRows(p).slice(-10).map(MK[mk].f))) + 0.5;
+const teamLine = r => { const g = r.g; if (g.spread == null) return null; return fr(g.home) === fr(r.team) ? -g.spread : g.spread; };
+function windows(p, mk, line) {
+  const rs = pRows(p);
+  return [
+    ["Últimos 5", hits(rs.slice(-5), mk, line)],
+    ["Últimos 10", hits(rs.slice(-10), mk, line)],
+    [String(CUR), hits(rs.filter(r => r.g.season === CUR), mk, line)],
+    [String(CUR - 1), hits(rs.filter(r => r.g.season === CUR - 1), mk, line)],
+  ];
+}
+
+// ---- props list (kept in this browser)
+const PROPS_KEY = "props";
+function loadProps() { try { const v = JSON.parse(store.get(PROPS_KEY) || "null"); return Array.isArray(v) ? v.filter(x => playerById[x.id] && MK[x.m]) : null; } catch (e) { return null; } }
+function saveProps(list) { store.set(PROPS_KEY, JSON.stringify(list)); }
+function exampleProps() {
+  const pick = (pos, mk) => players.filter(p => p.pos === pos && p.rows.some(r => r.g.season === CUR))
+    .map(p => [p, p.rows.filter(r => r.g.season >= CUR - 1).reduce((s, r) => s + MK[mk].f(r), 0)]).sort((a, b) => b[1] - a[1])[0]?.[0];
+  return [["QB","passing_yards"], ["RB","rushing_yards"], ["WR","receiving_yards"], ["TE","receptions"], ["WR","anytime_td"]]
+    .map(([pos, mk]) => { const p = pick(pos, mk); return p && {id: p.id, m: mk, line: suggestLine(p, mk)}; }).filter(Boolean);
+}
+let props = loadProps();
+let propsMsg = "";  // survives the re-render that follows adding a list
+const propsExample = () => !props;
+const currentProps = () => props || exampleProps();
+function setProps(list) { props = list; saveProps(list); render(); }
+
+function playerLabel(p) { return `${p.nm} (${p.pos}, ${p.team})`; }
+function nextOppCell(p) {
+  const ng = nextGame[fr(p.team)]; if (!ng) return el("span", {class:"muted", text:"—"});
+  const opp = oppIn(ng, fr(p.team)), d = recentDef[fr(opp)], rk = d?.rank?.[p.pos];
+  return el("span", {title: rk ? `${opp} permite ${fmtNum(defPerGame(d, p.pos, DEF_MK[p.pos]))} ${DEF_LABEL[p.pos]} por partido a ${p.pos} en sus últimos ${d.n} partidos; puesto ${rk} de ${recentDef.__count} (1 = la que menos permite)` : ""},
+    document.createTextNode((fr(ng.home) === fr(p.team) ? "vs " : "@ ") + opp + " "), rk ? el("span", {class:"badge", text: `#${rk} vs ${p.pos}`}) : null);
+}
+function trendPill(h) {
+  if (h.n < 5) return el("span", {class:"muted", text:"Poca muestra"});
+  const r = h.o / h.n;
+  return el("span", {class:"pill p", text: r >= .6 ? "Over" : r <= .4 ? "Under" : "Mixta"});
+}
+
+function renderProps() {
+  const box = $("props"); box.replaceChildren();
+  const list = currentProps();
+  box.append(el("div", {class:"panel-head"}, el("h3", {text:"Mi lista de props"}),
+    el("span", {class:"sec-note", text: propsExample() ? "Lista de ejemplo con líneas sugeridas (mediana de los últimos 10 partidos). Agrega las tuyas y reemplazan a estas." : `${list.length} props · se guardan en este navegador`})));
+  // add form
+  const form = el("form", {class:"prop-form", id:"prop-form"});
+  const inPl = el("input", {id:"pf-player", list:"pl-list", placeholder:"Busca un jugador", autocomplete:"off", "aria-label":"Jugador"});
+  const selMk = el("select", {id:"pf-market", "aria-label":"Mercado"});
+  const inLine = el("input", {id:"pf-line", type:"number", step:"0.5", min:"0", placeholder:"Línea", "aria-label":"Línea"});
+  const fillMk = () => { const p = players.find(x => playerLabel(x) === inPl.value); selMk.replaceChildren(...(p ? marketsFor(p.pos) : Object.keys(MK)).map(k => el("option", {value:k, text: MK[k].name}))); return p; };
+  fillMk();
+  inPl.addEventListener("change", () => { const p = fillMk(); if (p) inLine.value = suggestLine(p, selMk.value); });
+  selMk.addEventListener("change", () => { const p = players.find(x => playerLabel(x) === inPl.value); if (p) inLine.value = suggestLine(p, selMk.value); });
+  const msg = el("span", {class:"form-msg", role:"status"});
+  form.append(el("div", {class:"field grow"}, el("label", {for:"pf-player", text:"Jugador"}), inPl),
+    el("div", {class:"field"}, el("label", {for:"pf-market", text:"Mercado"}), selMk),
+    el("div", {class:"field narrow"}, el("label", {for:"pf-line", text:"Línea"}), inLine),
+    el("button", {type:"submit", class:"btn", text:"Agregar"}), msg);
+  form.addEventListener("submit", e => { e.preventDefault();
+    const p = players.find(x => playerLabel(x) === inPl.value), line = parseFloat(inLine.value);
+    if (!p) { msg.textContent = "Elige un jugador de la lista."; return; }
+    if (!(line >= 0)) { msg.textContent = "Escribe la línea, por ejemplo 70,5."; return; }
+    setProps([...(props || []), {id: p.id, m: selMk.value, line}]); });
+  box.append(form);
+  // bulk paste
+  const ta = el("textarea", {id:"pf-bulk", rows:"4", placeholder:"Puka Nacua; Yardas de recepción; 84.5\nJosh Allen; Yardas de pase; 235.5"});
+  const bulkMsg = el("span", {class:"form-msg", role:"status"});
+  const bulkBtn = el("button", {type:"button", class:"btn ghost", text:"Agregar lista"});
+  bulkBtn.addEventListener("click", () => {
+    const add = [], bad = [];
+    for (const ln of ta.value.split(/\n+/).map(s => s.trim()).filter(Boolean)) {
+      const [nm, mk, lv] = ln.split(/[;\t|]/).map(s => (s || "").trim());
+      const cands = players.filter(p => p.nm.toLowerCase() === (nm || "").toLowerCase()).sort((a, b) => b.last.localeCompare(a.last));
+      const m = mk && mkByName(mk), line = parseFloat((lv || "").replace(",", "."));
+      if (!cands.length || !m || !(line >= 0) || !MK[m].pos.includes(cands[0].pos)) bad.push(ln); else add.push({id: cands[0].id, m, line});
+    }
+    propsMsg = bad.length ? `No reconocí ${bad.length} línea(s): ${bad.join(" | ")}` : (add.length ? "" : "Pega al menos una línea.");
+    if (add.length) setProps([...(props || []), ...add]); else bulkMsg.textContent = propsMsg;
+  });
+  const copyBtn = el("button", {type:"button", class:"btn ghost", text:"Copiar mi lista"});
+  copyBtn.addEventListener("click", () => {
+    const txt = currentProps().map(x => `${playerById[x.id].nm}; ${MK[x.m].name}; ${x.line}`).join("\n");
+    Promise.resolve().then(() => navigator.clipboard.writeText(txt)).then(() => { bulkMsg.textContent = "Lista copiada."; },
+      () => { ta.value = txt; ta.select(); bulkMsg.textContent = "Selecciona y copia el texto del cuadro."; });
+  });
+  if (propsMsg) { bulkMsg.textContent = propsMsg; propsMsg = ""; }
+  box.append(el("details", {class:"tv bulk", ...(bulkMsg.textContent ? {open:""} : {})}, el("summary", {text:"Pegar o copiar una lista"}),
+    el("p", {class:"chart-desc", text:"Una prop por renglón: jugador; mercado; línea. Mercados: " + Object.values(MK).map(m => m.name).join(", ") + "."}),
+    ta, el("div", {class:"btn-row"}, bulkBtn, copyBtn, bulkMsg)));
+  // table
+  const tbl = el("table", {class:"st props-t"});
+  tbl.append(el("thead", {}, el("tr", {}, ...["Jugador","Mercado","Línea","Próximo rival","Media últ. 10","Últ. 5","Últ. 10",String(CUR),String(CUR-1),"Tendencia",""].map(h => el("th", {text:h})))));
+  const tb = el("tbody");
+  list.forEach((x, k) => {
+    const p = playerById[x.id], w = windows(p, x.m, x.line);
+    const hcell = h => el("td", {title: h.n ? `Over ${h.o}, under ${h.u}` + (h.pu ? `, push ${h.pu}` : "") : "Sin partidos"}, document.createTextNode(hitTxt(h) + " "), el("span", {class:"muted", text: hitPct(h)}));
+    const del = el("button", {type:"button", class:"del", "aria-label": `Quitar ${p.nm} ${MK[x.m].name}`, text:"×"});
+    del.addEventListener("click", e => { e.stopPropagation(); const cur = [...currentProps()]; cur.splice(k, 1); setProps(cur); });
+    const tr = el("tr", {tabindex:"0", "aria-label": `Ver ${p.nm}`},
+      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(p.team)}`}), el("b", {text: p.nm}), el("span", {class:"muted", text: `${p.pos} · ${p.team}`}), injTag(p))),
+      el("td", {text: MK[x.m].name}), el("td", {text: String(x.line).replace(".", ",")}), el("td", {}, nextOppCell(p)),
+      el("td", {text: fmtNum(w[1][1].avg)}), hcell(w[0][1]), hcell(w[1][1]), hcell(w[2][1]), hcell(w[3][1]), el("td", {}, trendPill(w[1][1])), el("td", {}, del));
+    if (state.player === p.id && state.pmarket === x.m) tr.classList.add("sel");
+    const pick = () => { setState({player: p.id, pmarket: x.m, pline: x.line}); $("pdetail").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    tb.append(tr);
+  });
+  tbl.append(tb);
+  box.append(el("div", {class:"tbl-wrap"}, tbl));
+}
+
+// ---- player detail
+function propChart(host, rows, mk, line) {
+  const items = rows.map(r => ({r, v: MK[mk].f(r)}));
+  const legend = el("div", {class:"legend"});
+  for (const [nm, c] of [["Over", "--s1"], ["Under", "--s2"]]) legend.append(el("span", {}, el("i", {class:"key", style:`color:var(${c});border-top-width:8px;width:10px;border-radius:2px`}), document.createTextNode(nm)));
+  legend.append(el("span", {}, el("i", {class:"key", style:"color:var(--ink-3);border-top-style:dashed"}), document.createTextNode("Línea " + String(line).replace(".", ","))));
+  const plot = el("div", {class:"plot"}); host.append(legend, plot);
+  if (!items.length) { plot.style.minHeight = "0"; plot.append(el("p", {class:"muted", text:"Sin partidos."})); return; }
+  const tip = el("div", {class:"tip", hidden:""});
+  const NS = "http://www.w3.org/2000/svg";
+  const sv = (tag, a={}) => { const e = document.createElementNS(NS, tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k, v); return e; };
+  const n = items.length;
+  function draw() {
+    plot.replaceChildren();
+    const W = Math.max(280, plot.clientWidth || 600), H = 240, m = {t:14, r:10, b:26, l:40};
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const mx = Math.max(line * 1.25, ...items.map(d => d.v), 1);
+    const step = [1,2,5,10,20,25,50,100].find(s => mx / s <= 5) || 100, top = Math.ceil(mx / step) * step;
+    const Y = v => m.t + ih - v / top * ih;
+    const band = iw / n, bw = Math.max(2, Math.min(26, band - 2)), X = i => m.l + band * (i + .5);
+    const svg = sv("svg", {viewBox:`0 0 ${W} ${H}`, width:W, height:H, tabindex:"0", role:"img", "aria-label": `${MK[mk].name} por partido frente a la línea ${line}. Usa las flechas para recorrer los partidos.`});
+    for (let v = 0; v <= top + 1e-9; v += step) {
+      svg.append(sv("line", {x1:m.l, x2:m.l+iw, y1:Y(v), y2:Y(v), stroke: v === 0 ? "var(--ink-3)" : "var(--rule-2)", "stroke-width":1}));
+      const tx = sv("text", {x:m.l-8, y:Y(v)+4, "text-anchor":"end"}); tx.textContent = v; svg.append(tx);
+    }
+    let lastX = -1e9;
+    items.forEach((d, i) => { if (i && items[i-1].r.g.season === d.r.g.season) return; if (X(i) - lastX < 30) return;
+      lastX = X(i); const tx = sv("text", {x:X(i), y:H-6, "text-anchor":"middle"}); tx.textContent = "’" + String(d.r.g.season).slice(2); svg.append(tx); });
+    const bars = items.map((d, i) => { const h = Math.max(2, Y(0) - Y(d.v));
+      const b = sv("rect", {x:X(i)-bw/2, y:Y(0)-h, width:bw, height:h, rx: Math.min(4, bw/2), fill: d.v > line ? "var(--s1)" : d.v < line ? "var(--s2)" : "var(--ink-3)"});
+      svg.append(b); return b; });
+    svg.append(sv("line", {x1:m.l, x2:m.l+iw, y1:Y(line), y2:Y(line), stroke:"var(--ink)", "stroke-width":1.5, "stroke-dasharray":"5 4"}));
+    const hits = items.map((d, i) => { const h = sv("rect", {x:X(i)-band/2, y:m.t, width:band, height:ih, fill:"transparent", class:"bar-hit"}); svg.append(h); return h; });
+    let idx = null;
+    const clear = () => { idx = null; tip.hidden = true; bars.forEach(b => b.removeAttribute("opacity")); };
+    function show(i) {
+      idx = i; bars.forEach((b, k) => b.setAttribute("opacity", k === i ? "1" : ".45"));
+      const {r, v} = items[i], g = r.g, tl = teamLine(r), home = fr(g.home) === fr(r.team);
+      const pts = home ? g.hs : g.as, opp = home ? g.as : g.hs;
+      tip.replaceChildren(el("div", {class:"t-h", text: `${dateShort(g.date)} ${g.season} · ${g.type === "REG" ? "Semana " + g.week : RND[g.type]}`}),
+        el("div", {class:"t-r"}, el("b", {text: String(v)}), document.createTextNode(MK[mk].name.toLowerCase() + (v > line ? " · over" : v < line ? " · under" : " · push"))),
+        el("div", {class:"t-r"}, el("b", {text: `${pts}-${opp}`}), document.createTextNode(`${home ? "vs" : "@"} ${r.opp}` + (tl == null ? "" : ` · línea ${lineTxt(tl)}`))));
+      tip.hidden = false;
+      const tw = tip.offsetWidth; let left = X(i) + band/2 + 6; if (left + tw > W) left = X(i) - band/2 - 6 - tw;
+      tip.style.left = Math.max(0, left) + "px"; tip.style.top = m.t + "px";
+    }
+    hits.forEach((h, i) => h.addEventListener("pointerenter", () => show(i)));
+    svg.addEventListener("pointerleave", clear);
+    svg.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault();
+      show(Math.max(0, Math.min(n-1, (idx == null ? n-1 : idx) + (e.key === "ArrowRight" ? 1 : -1)))); } });
+    svg.addEventListener("focus", () => show(n-1));
+    svg.addEventListener("blur", clear);
+    plot.append(svg, tip);
+  }
+  draw();
+  charts.push({plot, draw});
+}
+
+function splitRow(label, rows, mk, line) {
+  const h = hits(rows, mk, line);
+  return el("tr", {}, el("td", {text: label}), el("td", {text: h.n}), el("td", {text: fmtNum(h.avg)}), el("td", {}, document.createTextNode(hitTxt(h) + " "), el("span", {class:"muted", text: hitPct(h)})));
+}
+function usageRows(p) {
+  const rs = pRows(p), per = (rows, f) => rows.length ? rows.reduce((s, r) => s + f(r), 0) / rows.length : null;
+  const sets = [["Últimos 5", rs.slice(-5)], [String(CUR), rs.filter(r => r.g.season === CUR)], [String(CUR - 1), rs.filter(r => r.g.season === CUR - 1)]];
+  const metrics = p.pos === "QB"
+    ? [["Intentos de pase / partido", r => r.attempts, fmtNum], ["Yardas por intento", null, null], ["Acarreos / partido", r => r.carries, fmtNum]]
+    : p.pos === "RB"
+      ? [["Acarreos / partido", r => r.carries, fmtNum], ["Envíos (targets) / partido", r => r.targets, fmtNum], ["Reparto de envíos del equipo", r => r.ts, fmtPct]]
+      : [["Envíos (targets) / partido", r => r.targets, fmtNum], ["Reparto de envíos del equipo", r => r.ts, fmtPct], ["Reparto de yardas aéreas", r => r.ays, fmtPct]];
+  return metrics.map(([nm, f, fmt]) => el("tr", {}, el("td", {text: nm}), ...sets.map(([, rows]) => {
+    if (!f) { const att = rows.reduce((s, r) => s + r.attempts, 0); return el("td", {text: att ? fmtNum(rows.reduce((s, r) => s + r.passing_yards, 0) / att) : "—"}); }
+    return el("td", {text: rows.length ? fmt(per(rows, f)) : "—"}); })));
+}
+
+function renderPlayerDetail() {
+  const host = $("pdetail"); host.replaceChildren();
+  let p = playerById[state.player];
+  if (!p) { const x = currentProps()[0]; p = x && playerById[x.id]; if (x) { state.player = x.id; state.pmarket = x.m; state.pline = x.line; } }
+  if (!p) return;
+  if (!MK[state.pmarket] || !MK[state.pmarket].pos.includes(p.pos)) state.pmarket = marketsFor(p.pos)[0];
+  const mk = state.pmarket;
+  const line = state.pline != null && state.pline >= 0 ? state.pline : suggestLine(p, mk);
+  // header + controls
+  const search = el("input", {id:"pd-player", list:"pl-list", value: playerLabel(p), autocomplete:"off", "aria-label":"Jugador"});
+  search.addEventListener("change", () => { const q = players.find(x => playerLabel(x) === search.value); if (q) setState({player: q.id, pline: null}); });
+  search.addEventListener("focus", () => search.select());
+  const selMk = el("select", {id:"pd-market", "aria-label":"Mercado"}, ...marketsFor(p.pos).map(k => el("option", {value:k, text: MK[k].name})));
+  selMk.value = mk; selMk.addEventListener("change", () => setState({pmarket: selMk.value, pline: null}));
+  const inLine = el("input", {id:"pd-line", type:"number", step:"0.5", min:"0", value: line, "aria-label":"Línea"});
+  inLine.addEventListener("change", () => { const v = parseFloat(inLine.value); if (v >= 0) setState({pline: v}); });
+  const addBtn = el("button", {type:"button", class:"btn", text:"Agregar a mi lista"});
+  addBtn.addEventListener("click", () => setProps([...(props || []), {id: p.id, m: mk, line}]));
+  const ng = nextGame[fr(p.team)];
+  host.append(el("div", {class:"panel-head"}, el("h3", {text: p.nm}), el("span", {class:"sec-note", text: `${p.pos} · ${name(p.team)}`}), injTag(p)));
+  host.append(el("div", {class:"prop-form"},
+    el("div", {class:"field grow"}, el("label", {for:"pd-player", text:"Jugador"}), search),
+    el("div", {class:"field"}, el("label", {for:"pd-market", text:"Mercado"}), selMk),
+    el("div", {class:"field narrow"}, el("label", {for:"pd-line", text:"Línea"}), inLine), addBtn));
+  // hit-rate tiles
+  const tiles = el("div", {class:"tiles"});
+  for (const [lbl, h] of windows(p, mk, line)) tiles.append(tile(lbl, h.n ? fmtPct(h.o / h.n) : "—", h.n ? `over ${h.o} de ${h.n} · media ${fmtNum(h.avg)}` : "sin partidos"));
+  if (ng) {
+    const opp = oppIn(ng, fr(p.team)), h = hits(pRows(p).filter(r => fr(r.opp) === fr(opp)), mk, line), d = recentDef[fr(opp)], rk = d?.rank?.[p.pos];
+    tiles.append(tile(`Vs ${opp} (próximo)`, h.n ? fmtPct(h.o / h.n) : "—", (h.n ? `over ${h.o} de ${h.n} · ` : "sin partidos previos · ") +
+      (rk ? `defensa #${rk} de ${recentDef.__count} vs ${p.pos}` : "")));
+  }
+  host.append(tiles);
+  if (ng) {
+    const opp = oppIn(ng, fr(p.team)), d = recentDef[fr(opp)], rk = d?.rank?.[p.pos];
+    host.append(el("p", {class:"chart-desc", text: `Próximo partido: ${fr(ng.home) === fr(p.team) ? "vs" : "@"} ${name(opp)}, ${dateShort(ng.date)}` +
+      (ng.spread != null ? ` · línea ${lineTxt(fr(ng.home) === fr(p.team) ? -ng.spread : ng.spread)}, total ${String(ng.total).replace(".", ",")}` : "") +
+      (rk ? `. En sus últimos ${d.n} partidos, ${opp} permite ${fmtNum(defPerGame(d, p.pos, DEF_MK[p.pos]))} ${DEF_LABEL[p.pos]} por partido a ${p.pos} (puesto ${rk} de ${recentDef.__count}; 1 = la que menos permite).` : ".")}));
+  }
+  // chart + splits/usage side by side
+  const grid = el("div", {class:"team-grid"});
+  const left = el("div", {class:"chart-card"}, el("h3", {text: `${MK[mk].name}: últimos ${Math.min(20, pRows(p).length)} partidos`}),
+    el("p", {class:"chart-desc", text:"Cada barra es un partido; la línea punteada es tu línea."}));
+  propChart(left, pRows(p).slice(-20), mk, line);
+  const rs = pRows(p).filter(r => r.g.season >= CUR - 1);
+  const spl = el("table", {class:"splits"});
+  spl.append(el("caption", {text: `Splits ${CUR - 1}–${String(CUR).slice(2)}`}), el("thead", {}, el("tr", {}, ...["Situación","PJ","Media","Over"].map(h => el("th", {text:h})))));
+  const home = r => fr(r.g.home) === fr(r.team);
+  spl.append(el("tbody", {},
+    splitRow("Local", rs.filter(home), mk, line), splitRow("Visitante", rs.filter(r => !home(r)), mk, line),
+    splitRow("Favorito", rs.filter(r => (teamLine(r) ?? 0) < 0), mk, line), splitRow("Underdog", rs.filter(r => (teamLine(r) ?? 0) > 0), mk, line),
+    splitRow("Total ≥ 47", rs.filter(r => r.g.total != null && r.g.total >= 47), mk, line), splitRow("Total < 47", rs.filter(r => r.g.total != null && r.g.total < 47), mk, line)));
+  const use = el("table", {class:"splits"});
+  use.append(el("caption", {text:"Uso"}), el("thead", {}, el("tr", {}, ...["", "Últimos 5", String(CUR), String(CUR - 1)].map(h => el("th", {text:h})))), el("tbody", {}, ...usageRows(p)));
+  grid.append(left, el("div", {class:"chart-card"}, el("div", {class:"tbl-wrap"}, spl), el("div", {class:"tbl-wrap"}, use)));
+  host.append(grid);
+  // recent game log
+  const log = el("table", {class:"log"});
+  const cols = p.pos === "QB" ? [["C/I", r => `${r.completions}/${r.attempts}`], ["Yds pase", r => r.passing_yards], ["TD", r => r.passing_tds], ["INT", r => r.passing_interceptions], ["Yds tierra", r => r.rushing_yards]]
+    : p.pos === "RB" ? [["Acarreos", r => r.carries], ["Yds tierra", r => r.rushing_yards], ["Rec/Env", r => `${r.receptions}/${r.targets}`], ["Yds rec", r => r.receiving_yards], ["TD", r => r.rushing_tds + r.receiving_tds]]
+    : [["Rec/Env", r => `${r.receptions}/${r.targets}`], ["Yds rec", r => r.receiving_yards], ["TD", r => r.receiving_tds + r.rushing_tds], ["% envíos", r => fmtPct(r.ts)]];
+  log.append(el("thead", {}, el("tr", {}, ...["Fecha","Rival","Línea equipo", ...cols.map(c => c[0])].map(h => el("th", {text:h})))));
+  log.append(el("tbody", {}, ...pRows(p).slice(-10).reverse().map(r => el("tr", {},
+    el("td", {text: `${dateShort(r.g.date)} ${String(r.g.season).slice(2)}`}), el("td", {text: (fr(r.g.home) === fr(r.team) ? "vs " : "@ ") + r.opp}), el("td", {text: lineTxt(teamLine(r))}),
+    ...cols.map(([, f]) => el("td", {text: f(r)}))))));
+  host.append(el("h3", {text:"Últimos 10 partidos"}), el("div", {class:"tbl-wrap"}, log));
+}
+
+function renderPlayers() {
+  $("pl-note").textContent = `QB, RB, WR y TE desde ${PL_FIRST} · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"} · lesiones según el último reporte de cada equipo`;
+  renderProps(); renderPlayerDetail();
+}
+
+// ---- team players (respects season / window / rival) and defense vs position
+function renderTeamPlayers() {
+  const T = state.team, R = isHist() ? state.rival : "", host = $("tm-players"); host.replaceChildren();
+  host.append(el("h3", {text: R ? `Jugadores contra ${name(R)}` : "Jugadores del equipo"}));
+  const rows = plRows.filter(r => fr(r.team) === T && inSeason(r.g) && inPhase(r.g) && (!R || fr(r.opp) === R));
+  if (!rows.length) { host.append(el("p", {class:"muted", text: `Sin estadísticas de jugador en este periodo (disponibles desde ${PL_FIRST}).`})); return; }
+  const agg = new Map();
+  for (const r of rows) { const a = agg.get(r.p) || {p: r.p, n: 0}; a.n++; sumInto(a, r); agg.set(r.p, a); }
+  const vol = a => a.passing_yards + a.rushing_yards + a.receiving_yards;
+  const keep = {QB:2, RB:3, WR:5, TE:2};
+  const list = POS.flatMap(pos => [...agg.values()].filter(a => a.p.pos === pos).sort((x, y) => vol(y) - vol(x)).slice(0, keep[pos]));
+  host.append(el("p", {class:"chart-desc", text: `Promedios por partido jugado · ${seasonLabel(state.season)}${R ? " · solo partidos entre ambos" : ""}. Haz clic en un jugador para ver sus props.`}));
+  const tbl = el("table", {class:"st"});
+  tbl.append(el("thead", {}, el("tr", {}, ...["Jugador","PJ","Yds pase","TD pase","Yds tierra","Rec","Yds rec","TD"].map(h => el("th", {text:h})))));
+  const pg = (a, c) => fmtNum(a[c] / a.n);
+  tbl.append(el("tbody", {}, ...list.map(a => {
+    const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + a.p.nm},
+      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"abbr", text: a.p.pos}), el("span", {text: a.p.nm}), injTag(a.p))),
+      el("td", {text: a.n}), el("td", {text: a.p.pos === "QB" ? pg(a, "passing_yards") : "—"}), el("td", {text: a.p.pos === "QB" ? pg(a, "passing_tds") : "—"}),
+      el("td", {text: pg(a, "rushing_yards")}), el("td", {text: a.p.pos === "QB" ? "—" : pg(a, "receptions")}), el("td", {text: a.p.pos === "QB" ? "—" : pg(a, "receiving_yards")}),
+      el("td", {text: fmtNum((a.rushing_tds + a.receiving_tds + (a.p.pos === "QB" ? a.passing_tds : 0)) / a.n)}));
+    const pick = () => { setState({player: a.p.id, pmarket: marketsFor(a.p.pos).includes(state.pmarket) ? state.pmarket : marketsFor(a.p.pos)[0], pline: null});
+      $("pdetail").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    return tr; })));
+  host.append(el("div", {class:"tbl-wrap"}, tbl));
+}
+function renderDefense() {
+  const T = state.team, host = $("tm-defense"); host.replaceChildren();
+  host.append(el("h3", {text:"Defensa contra posición"}));
+  const out = defAllowed(g => inSeason(g) && inPhase(g)), d = out[T];
+  if (!d || !d.n) { host.append(el("p", {class:"muted", text: `Sin datos en este periodo (disponibles desde ${PL_FIRST}).`})); return; }
+  host.append(el("p", {class:"chart-desc", text: `Lo que permite ${name(T)} por partido a cada posición rival · ${seasonLabel(state.season)}, ${d.n} partidos. Puesto 1 = la defensa que menos permite de ${out.__count}.` + (isHist() && state.rival ? " No se filtra por rival." : "")}));
+  const tbl = el("table", {class:"splits"});
+  tbl.append(el("thead", {}, el("tr", {}, ...["Posición","Yds pase","Yds tierra","Rec","Yds rec","TD","Puesto"].map(h => el("th", {text:h})))));
+  tbl.append(el("tbody", {}, ...POS.map(pos => { const s = d.pos[pos] || {}, pgv = c => fmtNum((s[c] || 0) / d.n), rk = d.rank?.[pos];
+    return el("tr", {}, el("td", {text: pos}), el("td", {text: pos === "QB" ? pgv("passing_yards") : "—"}), el("td", {text: pgv("rushing_yards")}),
+      el("td", {text: pos === "QB" ? "—" : pgv("receptions")}), el("td", {text: pos === "QB" ? "—" : pgv("receiving_yards")}),
+      el("td", {text: fmtNum(((s.rushing_tds || 0) + (s.receiving_tds || 0) + (pos === "QB" ? s.passing_tds || 0 : 0)) / d.n)}),
+      el("td", {title: `Ordenado por ${DEF_LABEL[pos]} permitidas`}, el("span", {class:"badge", text: rk ? `#${rk}` : "—"}))); })));
+  host.append(el("div", {class:"tbl-wrap"}, tbl));
+}
+
 // ---------- controls ----------
-function setState(p) { Object.assign(state, p); for (const k in p) store.set(k, state[k]); render(); }
+function setState(p) { Object.assign(state, p); for (const k in p) if (k !== "pline") store.set(k, state[k]); render(); }
 function render() {
   charts.length = 0;
   const hist = isHist();
@@ -693,6 +1144,7 @@ function render() {
   $("f-season").value = state.season; $("f-team").value = state.team; rv.value = state.rival; $("f-window").value = state.window;
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === state.phase));
   renderStandings(); renderBetting(); renderTeam();
+  if (PD) { renderTeamPlayers(); renderDefense(); renderPlayers(); }
 }
 $("f-season").append(el("option", {value:HIST, text: "Histórico"}));
 for (const s of [...seasons].reverse()) $("f-season").append(el("option", {value:s, text: seasonLabel(s)}));
@@ -706,6 +1158,8 @@ $("f-team").addEventListener("change", e => setState({team: e.target.value, ...(
 $("f-rival").addEventListener("change", e => setState({rival: e.target.value}));
 $("f-window").addEventListener("change", e => setState({window: +e.target.value}));
 document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setState({phase: b.dataset.phase})));
+if (PD) $("pl-list").append(...[...players].sort((a, b) => b.last.localeCompare(a.last) || a.nm.localeCompare(b.nm)).map(p => el("option", {value: playerLabel(p)})));
+else { $("players").hidden = true; $("tm-players-grid").hidden = true; }
 const lp = new Date(lastPlayed + "T12:00:00");
 $("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
 render();
