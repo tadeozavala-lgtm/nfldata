@@ -166,6 +166,15 @@ details.bulk{margin-bottom:12px}
 .splits{margin-bottom:12px}
 #tm-players-grid{grid-template-columns:1fr}
 #gl{display:flex;flex-direction:column;gap:12px}
+.rk{font-size:11px;color:var(--ink-3);font-weight:600}
+.rk-t th.grp{text-align:center;border-bottom:1px solid var(--rule);color:var(--ink-2)}
+.rk-t td:nth-child(7),.rk-t tr:last-child th:nth-child(7){border-left:1px solid var(--rule)}
+.rk-t tr:first-child th:nth-child(4){border-left:1px solid var(--rule)}
+button.sort{font:inherit;font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;color:var(--ink-3);background:none;border:0;padding:0;cursor:pointer}
+button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.pin{border-top:1px solid var(--rule-2);padding-top:8px;display:flex;flex-direction:column;gap:4px}
+.pin-h{font-size:14px}
+.pin-l{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:2px}
 #gl .team-grid{grid-template-columns:1fr}
 .splits tr.now td{background:var(--accent-wash);font-weight:600}
 #pdetail{display:flex;flex-direction:column;gap:12px}
@@ -204,6 +213,7 @@ details.bulk{margin-bottom:12px}
   <section id="standings">
     <div class="sec-head"><h2 id="st-title">Clasificación</h2><span class="sec-note" id="st-note"></span></div>
     <div class="confs" id="confs"></div>
+    <div class="panel" id="rk"></div>
   </section>
 
   <section id="betting">
@@ -225,6 +235,7 @@ details.bulk{margin-bottom:12px}
         <div class="tbl-wrap"><table class="log" id="log"></table></div>
       </div>
     </div>
+    <div class="panel" id="tm-rank"></div>
     <div class="panel" id="gl"></div>
     <div class="team-grid" id="tm-players-grid">
       <div class="panel chart-card" id="tm-players"></div>
@@ -727,6 +738,79 @@ function renderSeasonLog(tbl, xs, per, metaOf, rec3) {
   tbl.classList.add("st");
 }
 
+// ---------- team offense / defense rankings ----------
+const TS = D.t ? D.t.map(([gi, team, py, ry]) => ({g: games[gi], t: fr(team), py, ry})) : [];
+const RK_ALL = ["pts", "tot", "py", "ry", "apts", "atot", "apy", "ary"];
+const RK_LABEL = {pts:"puntos", tot:"yardas totales", py:"yardas por aire", ry:"yardas por tierra",
+  apts:"puntos permitidos", atot:"yardas totales permitidas", apy:"yardas por aire permitidas", ary:"yardas por tierra permitidas"};
+// per-game production and allowed; rank 1 = most for offense keys, least for "a…" (allowed) keys
+function teamRanks(inScope) {
+  const o = {}, get = t => o[t] ||= {n:0, py:0, ry:0, pts:0, apy:0, ary:0, apts:0};
+  for (const r of TS) {
+    if (!played(r.g) || !inScope(r.g)) continue;
+    const home = fr(r.g.home) === r.t, opp = fr(home ? r.g.away : r.g.home), own = home ? r.g.hs : r.g.as;
+    const a = get(r.t), b = get(opp);
+    a.n++; a.py += r.py; a.ry += r.ry; a.pts += own;
+    b.apy += r.py; b.ary += r.ry; b.apts += own;
+  }
+  const teams = Object.keys(o).filter(t => o[t].n);
+  for (const t of teams) { const a = o[t];
+    a.pg = {py: a.py/a.n, ry: a.ry/a.n, tot: (a.py+a.ry)/a.n, pts: a.pts/a.n, apy: a.apy/a.n, ary: a.ary/a.n, atot: (a.apy+a.ary)/a.n, apts: a.apts/a.n}; a.rk = {}; }
+  for (const k of RK_ALL) { const desc = !k.startsWith("a");
+    [...teams].sort((x, y) => desc ? o[y].pg[k] - o[x].pg[k] : o[x].pg[k] - o[y].pg[k]).forEach((t, i) => o[t].rk[k] = i + 1); }
+  return {teams: o, count: teams.length};
+}
+const seasonRankCache = {}, seasonPosCache = {};
+const seasonRanks = s => seasonRankCache[s + state.phase] ||= teamRanks(g => g.season === s && inPhase(g));
+const seasonPosRanks = s => seasonPosCache[s + state.phase] ||= defAllowed(g => g.season === s && inPhase(g));
+const rkCell = (v, rk, d=1) => el("td", {}, document.createTextNode(fmtNum(v, d) + " "), el("span", {class:"rk", text: "#" + rk}));
+// abbreviation a franchise used in a given season (OAK before LV, etc.)
+const abbrIn = (t, s) => Object.keys(standMeta[s] || {}).find(x => fr(x) === t) || t;
+
+let rkSort = "tot";
+function renderRankings() {
+  const host = $("rk"); host.replaceChildren();
+  const R = teamRanks(g => inSeason(g) && inPhase(g));
+  host.append(el("div", {class:"panel-head"}, el("h3", {text: "Ofensivas y defensivas " + seasonLabel(state.season)}),
+    el("span", {class:"sec-note", text: `Promedios por partido · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"}. #1 es la ofensiva que más produce o la defensiva que menos permite. Yardas por aire netas de sacks. Haz clic en un encabezado para ordenar.`})));
+  if (!R.count) { host.append(el("p", {class:"muted", text:"Sin datos en este periodo."})); return; }
+  const cols = [["pts","Puntos"], ["tot","Yds totales"], ["py","Aire"], ["ry","Tierra"], ["apts","Puntos"], ["atot","Yds totales"], ["apy","Aire"], ["ary","Tierra"]];
+  const th = ([k, lbl]) => { const b = el("button", {type:"button", class:"sort" + (rkSort === k ? " on" : ""), "aria-pressed": String(rkSort === k), text: lbl});
+    b.addEventListener("click", () => { rkSort = k; renderRankings(); }); return el("th", {}, b); };
+  const tbl = el("table", {class:"st rk-t"});
+  tbl.append(el("thead", {},
+    el("tr", {}, el("th", {}), el("th", {}), el("th", {colspan:"4", class:"grp", text:"Ofensiva"}), el("th", {colspan:"4", class:"grp", text:"Defensiva (permitido)"})),
+    el("tr", {}, el("th", {text:"Equipo"}), el("th", {text:"PJ"}), ...cols.map(th))));
+  const teams = Object.keys(R.teams).filter(t => R.teams[t].n).sort((a, b) => R.teams[a].rk[rkSort] - R.teams[b].rk[rkSort]);
+  const tb = el("tbody");
+  for (const t of teams) { const a = R.teams[t], shown = isHist() ? t : abbrIn(t, state.season);
+    const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + name(shown)},
+      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(shown)}`}), el("span", {class:"abbr", text: shown}), el("span", {class:"tname", text: name(shown).split(" ").slice(-1)[0]}))),
+      el("td", {text: a.n}), ...cols.map(([k]) => rkCell(a.pg[k], a.rk[k])));
+    if (t === state.team) tr.classList.add("sel");
+    const pick = () => { setState({team: t, ...(t === state.rival ? {rival: ""} : {})}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    tb.append(tr); }
+  tbl.append(tb);
+  host.append(el("div", {class:"tbl-wrap"}, tbl));
+}
+
+// the selected team's ranks in the current scope
+function renderTeamRank() {
+  const host = $("tm-rank"); host.replaceChildren();
+  const R = teamRanks(g => inSeason(g) && inPhase(g)), a = R.teams[state.team];
+  host.append(el("div", {class:"panel-head"}, el("h3", {text:"Ranking ofensivo y defensivo"}),
+    el("span", {class:"sec-note", text: `${seasonLabel(state.season)} · por partido · puesto entre ${R.count} equipos` + (isHist() && state.rival ? " · no se filtra por rival" : "")})));
+  if (!a) { host.append(el("p", {class:"muted", text:"Sin datos en este periodo."})); return; }
+  const tbl = el("table", {class:"splits"});
+  tbl.append(el("thead", {}, el("tr", {}, ...["", "General (yardas)", "Por aire", "Por tierra", "Puntos"].map(h => el("th", {text:h})))),
+    el("tbody", {},
+      el("tr", {}, el("td", {text:"Ofensiva"}), ...["tot","py","ry","pts"].map(k => rkCell(a.pg[k], a.rk[k]))),
+      el("tr", {}, el("td", {text:"Defensiva (permite)"}), ...["atot","apy","ary","apts"].map(k => rkCell(a.pg[k], a.rk[k])))));
+  host.append(el("div", {class:"tbl-wrap"}, tbl));
+}
+
 // ---------- players ----------
 const PD = D.p;
 const COLS = PD ? PD.cols : [];
@@ -765,6 +849,8 @@ const MK = {
   rush_rec:       {name:"Yardas tierra + recepción", pos:["RB","WR","TE"], f: r => r.rushing_yards + r.receiving_yards},
   anytime_td:     {name:"TD en cualquier momento", pos:["QB","RB","WR","TE"], f: r => r.rushing_tds + r.receiving_tds},
 };
+const MK_DEF = {passing_yards:["apy"], passing_tds:["apy"], completions:["apy"], attempts:["apy"], interceptions:["apy"],
+  receptions:["apy"], receiving_yards:["apy"], rushing_yards:["ary"], carries:["ary"], pass_rush:["apy","ary"], rush_rec:["ary","apy"], anytime_td:["apy","ary"]};
 const DEF_MK = {QB:"passing_yards", RB:"rushing_yards", WR:"receiving_yards", TE:"receiving_yards"};
 const marketsFor = pos => Object.keys(MK).filter(k => MK[k].pos.includes(pos));
 const mkByName = s => { const q = s.trim().toLowerCase(); return Object.keys(MK).find(k => k === q || MK[k].name.toLowerCase() === q)
@@ -954,6 +1040,27 @@ function propChart(host, rows, mk, line) {
   legend.append(el("span", {}, el("i", {class:"key", style:"color:var(--ink-3);border-top-style:dashed"}), document.createTextNode("Línea " + String(line).replace(".", ","))));
   const plot = el("div", {class:"plot"}); host.append(legend, plot);
   if (!items.length) { plot.style.minHeight = "0"; plot.append(el("p", {class:"muted", text:"Sin partidos."})); return; }
+  // which defensive ranking matters for this market: against the pass, the run, or both
+  const kinds = MK_DEF[mk] || ["apy", "ary"];
+  const oppRank = (r, k) => { const R = seasonRanks(r.g.season), a = R.teams[fr(r.opp)]; return a ? {rk: a.rk[k], v: a.pg[k], n: R.count} : null; };
+  const pinBox = el("div", {class:"pin", "aria-live":"polite"},
+    el("p", {class:"muted", text:"Haz clic en una columna (o pulsa Enter con la gráfica enfocada) para ver cómo defendía ese rival."}));
+  host.append(pinBox);
+  let pinned = null, curBars = [];
+  function pin(i) {
+    pinned = i; curBars.forEach((b, k) => { if (k === i) { b.setAttribute("stroke", "var(--ink)"); b.setAttribute("stroke-width", "2"); } else b.removeAttribute("stroke"); });
+    const {r, v} = items[i], g = r.g, home = fr(g.home) === fr(r.team), opp = fr(r.opp), s = g.season;
+    const inProgress = s === lastSeason && !lastSeasonDone;
+    const lines = [...kinds, "apts"].map(k => { const x = oppRank(r, k); return x && el("li", {},
+      el("b", {text: `#${x.rk} de ${x.n}`}), document.createTextNode(` en ${RK_LABEL[k]}: ${fmtNum(x.v)} por partido`)); });
+    const pr = PD ? seasonPosRanks(s)[opp] : null, prk = pr?.rank?.[r.p.pos];
+    if (prk) lines.push(el("li", {}, el("b", {text: `#${prk}`}), document.createTextNode(` contra ${r.p.pos}: ${fmtNum(defPerGame(pr, r.p.pos, DEF_MK[r.p.pos]))} ${DEF_LABEL[r.p.pos]} por partido`)));
+    pinBox.replaceChildren(
+      el("div", {class:"pin-h"}, el("b", {text: `${dateShort(g.date)} ${s} · ${home ? "vs" : "@"} ${name(abbrIn(opp, s))}`}),
+        document.createTextNode(` · ${v} ${MK[mk].name.toLowerCase()} (${v > line ? "over" : v < line ? "under" : "push"})`)),
+      el("p", {class:"chart-desc", text: `Defensa de ${opp} en la temporada ${s}${inProgress ? " (hasta hoy)" : ""}, ${state.phase === "REG" ? "temporada regular" : "con playoffs"}. #1 es la que menos permite.`}),
+      el("ul", {class:"pin-l"}, ...lines.filter(Boolean)));
+  }
   const tip = el("div", {class:"tip", hidden:""});
   const NS = "http://www.w3.org/2000/svg";
   const sv = (tag, a={}) => { const e = document.createElementNS(NS, tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k, v); return e; };
@@ -977,6 +1084,7 @@ function propChart(host, rows, mk, line) {
     const bars = items.map((d, i) => { const h = Math.max(2, Y(0) - Y(d.v));
       const b = sv("rect", {x:X(i)-bw/2, y:Y(0)-h, width:bw, height:h, rx: Math.min(4, bw/2), fill: d.v > line ? "var(--s1)" : d.v < line ? "var(--s2)" : "var(--ink-3)"});
       svg.append(b); return b; });
+    curBars = bars; if (pinned != null && bars[pinned]) { bars[pinned].setAttribute("stroke", "var(--ink)"); bars[pinned].setAttribute("stroke-width", "2"); }
     svg.append(sv("line", {x1:m.l, x2:m.l+iw, y1:Y(line), y2:Y(line), stroke:"var(--ink)", "stroke-width":1.5, "stroke-dasharray":"5 4"}));
     const hits = items.map((d, i) => { const h = sv("rect", {x:X(i)-band/2, y:m.t, width:band, height:ih, fill:"transparent", class:"bar-hit"}); svg.append(h); return h; });
     let idx = null;
@@ -987,15 +1095,17 @@ function propChart(host, rows, mk, line) {
       const pts = home ? g.hs : g.as, opp = home ? g.as : g.hs;
       tip.replaceChildren(el("div", {class:"t-h", text: `${dateShort(g.date)} ${g.season} · ${g.type === "REG" ? "Semana " + g.week : RND[g.type]}`}),
         el("div", {class:"t-r"}, el("b", {text: String(v)}), document.createTextNode(MK[mk].name.toLowerCase() + (v > line ? " · over" : v < line ? " · under" : " · push"))),
-        el("div", {class:"t-r"}, el("b", {text: `${pts}-${opp}`}), document.createTextNode(`${home ? "vs" : "@"} ${r.opp}` + (tl == null ? "" : ` · línea ${lineTxt(tl)}`))));
+        el("div", {class:"t-r"}, el("b", {text: `${pts}-${opp}`}), document.createTextNode(`${home ? "vs" : "@"} ${r.opp}` + (tl == null ? "" : ` · línea ${lineTxt(tl)}`))),
+        ...kinds.map(k => { const x = oppRank(r, k); return x && el("div", {class:"t-r"}, el("b", {text: `#${x.rk}`}), document.createTextNode(`defensa de ${r.opp} ${k === "apy" ? "contra el pase" : "contra la carrera"} (${g.season})`)); }).filter(Boolean));
       tip.hidden = false;
       const tw = tip.offsetWidth; let left = X(i) + band/2 + 6; if (left + tw > W) left = X(i) - band/2 - 6 - tw;
       tip.style.left = Math.max(0, left) + "px"; tip.style.top = m.t + "px";
     }
-    hits.forEach((h, i) => h.addEventListener("pointerenter", () => show(i)));
+    hits.forEach((h, i) => { h.addEventListener("pointerenter", () => show(i)); h.addEventListener("click", () => pin(i)); h.style.cursor = "pointer"; });
     svg.addEventListener("pointerleave", clear);
     svg.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault();
-      show(Math.max(0, Math.min(n-1, (idx == null ? n-1 : idx) + (e.key === "ArrowRight" ? 1 : -1)))); } });
+      show(Math.max(0, Math.min(n-1, (idx == null ? n-1 : idx) + (e.key === "ArrowRight" ? 1 : -1)))); }
+      else if ((e.key === "Enter" || e.key === " ") && idx != null) { e.preventDefault(); pin(idx); } });
     svg.addEventListener("focus", () => show(n-1));
     svg.addEventListener("blur", clear);
     plot.append(svg, tip);
@@ -1063,7 +1173,7 @@ function renderPlayerDetail() {
   // chart + splits/usage side by side
   const grid = el("div", {class:"team-grid"});
   const left = el("div", {class:"chart-card"}, el("h3", {text: `${MK[mk].name}: últimos ${Math.min(20, pRows(p).length)} partidos`}),
-    el("p", {class:"chart-desc", text:"Cada barra es un partido; la línea punteada es tu línea."}));
+    el("p", {class:"chart-desc", text:"Cada barra es un partido; la línea punteada es tu línea. Haz clic en una barra para ver el ranking defensivo de ese rival."}));
   propChart(left, pRows(p).slice(-20), mk, line);
   const rs = pRows(p).filter(r => r.g.season >= CUR - 1);
   const spl = el("table", {class:"splits"});
@@ -1235,6 +1345,7 @@ function render() {
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === state.phase));
   renderStandings(); renderBetting(); renderTeam();
   renderGameLines();
+  if (TS.length) { renderRankings(); renderTeamRank(); }
   if (PD) { renderTeamPlayers(); renderDefense(); renderPlayers(); }
 }
 $("f-season").append(el("option", {value:HIST, text: "Histórico"}));
@@ -1251,6 +1362,7 @@ $("f-window").addEventListener("change", e => setState({window: +e.target.value}
 document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setState({phase: b.dataset.phase})));
 if (PD) $("pl-list").append(...[...players].sort((a, b) => b.last.localeCompare(a.last) || a.nm.localeCompare(b.nm)).map(p => el("option", {value: playerLabel(p)})));
 else { $("players").hidden = true; $("tm-players-grid").hidden = true; }
+if (!TS.length) { $("rk").hidden = true; $("tm-rank").hidden = true; }
 const lp = new Date(lastPlayed + "T12:00:00");
 $("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
 render();

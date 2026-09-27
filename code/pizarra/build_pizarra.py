@@ -5,10 +5,11 @@ standings, betting trends, per-team detail and player props from 2002 on.
 Team and game data come from this repo's data/games.csv, data/standings.csv,
 data/teams.csv and data/teamcolors.csv (standard library only).
 
-Player data (weekly stats for QB/RB/WR/TE and the latest injury report) is
-downloaded from nflverse releases with nflreadpy (`pip install nflreadpy`).
-Without nflreadpy, or with --no-players, the page is built without the
-player sections.
+Player data (weekly stats for QB/RB/WR/TE and the latest injury report) and
+per-game team passing/rushing yards (for the offense and defense rankings)
+are downloaded from nflverse releases with nflreadpy (`pip install
+nflreadpy`). Without nflreadpy, or with --no-players, the page is built
+without those sections.
 
 Usage:
     python3 code/pizarra/build_pizarra.py [-o OUTPUT] [--no-players]
@@ -115,6 +116,28 @@ def build_players(game_index):
     return {"cols": STAT_COLS, "pl": players, "r": out, "inj": injuries, "cur": current}
 
 
+def build_team_stats(game_index):
+    """Net passing and rushing yards of every team in every game, via nflreadpy."""
+    try:
+        import nflreadpy as nfl
+        import polars as pl
+    except ImportError:
+        print("nflreadpy not installed: building without team offense/defense rankings")
+        return None
+    current = nfl.get_current_season()
+    ts = nfl.load_team_stats(list(range(FIRST_SEASON, current + 1)), summary_level="week").filter(
+        pl.col("game_id").is_in(list(game_index))
+    )
+    # sack_yards_lost is stored as a negative number; net passing = gross passing minus sack yards
+    out = [
+        [game_index[r["game_id"]], r["team"],
+         int((r["passing_yards"] or 0) - abs(r["sack_yards_lost"] or 0)), int(r["rushing_yards"] or 0)]
+        for r in ts.iter_rows(named=True)
+    ]
+    print(f"Team stats: {len(out)} team-games")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-o", "--output", type=Path, default=HERE / "pizarra-nfl.html")
@@ -123,6 +146,7 @@ def main():
 
     data, game_index = build_data()
     data["p"] = None if args.no_players else build_players(game_index)
+    data["t"] = None if args.no_players else build_team_stats(game_index)
     template = (HERE / "pizarra_template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     args.output.write_text(template.replace("__DATA__", payload), encoding="utf-8")
