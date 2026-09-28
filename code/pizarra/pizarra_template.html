@@ -167,6 +167,14 @@ details.bulk{margin-bottom:12px}
 #tm-players-grid{grid-template-columns:1fr}
 #gl{display:flex;flex-direction:column;gap:12px}
 .rk{font-size:11px;color:var(--ink-3);font-weight:600}
+.rk-t.eff td:nth-child(7),.rk-t.eff tr:last-child th:nth-child(7){border-left:0}
+.rk-t.eff td:nth-child(9),.rk-t.eff tr:last-child th:nth-child(9){border-left:1px solid var(--rule)}
+#rk .panel-head .seg{font-size:13px}
+.rk-t.eff td,.rk-t.eff th{padding-inline:5px}
+.rk-t.eff .tname{display:none}
+.badge.starter{background:var(--accent-wash);color:var(--accent)}
+.ctx{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule-2);padding-top:12px}
+.ctx h3{font-size:19px;font-weight:600}
 .rk-t th.grp{text-align:center;border-bottom:1px solid var(--rule);color:var(--ink-2)}
 .rk-t td:nth-child(7),.rk-t tr:last-child th:nth-child(7){border-left:1px solid var(--rule)}
 .rk-t tr:first-child th:nth-child(4){border-left:1px solid var(--rule)}
@@ -259,7 +267,8 @@ const FR = {OAK:"LV", SD:"LAC", STL:"LA"};
 const fr = t => FR[t] || t;
 const PLAYOFF = {WonSB:"Campeón", LostSB:"Perdió SB", LostCC:"Final conf.", LostDV:"Divisional", LostWC:"Comodín"};
 
-const games = D.g.map(a => ({season:a[0], type:a[1], week:a[2], date:a[3], away:a[4], as:a[5], home:a[6], hs:a[7], spread:a[8], total:a[9], neutral:a[10], ot:a[11]}));
+const games = D.g.map(a => ({season:a[0], type:a[1], week:a[2], date:a[3], away:a[4], as:a[5], home:a[6], hs:a[7], spread:a[8], total:a[9], neutral:a[10], ot:a[11],
+  roof:a[12] || "", temp:a[13], wind:a[14], ref:a[15] || "", arest:a[16], hrest:a[17], div:a[18]}));
 const played = g => g.hs != null && g.as != null;
 const seasons = [...new Set(games.map(g => g.season))].sort((a,b) => a-b);
 const lastSeason = seasons[seasons.length-1];
@@ -302,6 +311,7 @@ const state = {
   pmarket: store.get("pmarket") || "",
   pline: null,
   gspread: null, gtotal: null, ghome: null,  // game-lines panel, not persisted
+  gwind: null, gtemp: null, gref: null,      // game context inputs, not persisted
 };
 if (state.season !== HIST && !seasons.includes(state.season)) state.season = defSeason;
 
@@ -740,12 +750,22 @@ function renderSeasonLog(tbl, xs, per, metaOf, rec3) {
 
 // ---------- team offense / defense rankings ----------
 const TS = D.t ? D.t.map(([gi, team, py, ry]) => ({g: games[gi], t: fr(team), py, ry})) : [];
+// play-by-play efficiency per team-game: dropbacks/runs with EPA and successes, 3rd downs,
+// early-down neutral pass-rate-over-expected (count, sum) and red-zone trips/TDs
+const EF = D.e ? D.e.map(([gi, team, pn, pe, ps, rn, re, rs, a3, c3, on, oe, rzt, rztd]) =>
+  ({g: games[gi], t: fr(team), pn, pe, ps, rn, re, rs, a3, c3, on, oe, rzt, rztd})) : [];
 const RK_ALL = ["pts", "tot", "py", "ry", "apts", "atot", "apy", "ary"];
+// efficiency keys; "a…" = allowed by the defense. PROE is ranked most pass-heavy first (a style, not a grade)
+const EF_ALL = ["epa", "pepa", "repa", "sr", "rz", "t3", "proe", "aepa", "apepa", "arepa", "asr", "arz", "at3"];
 const RK_LABEL = {pts:"puntos", tot:"yardas totales", py:"yardas por aire", ry:"yardas por tierra",
-  apts:"puntos permitidos", atot:"yardas totales permitidas", apy:"yardas por aire permitidas", ary:"yardas por tierra permitidas"};
+  apts:"puntos permitidos", atot:"yardas totales permitidas", apy:"yardas por aire permitidas", ary:"yardas por tierra permitidas",
+  epa:"EPA por jugada", pepa:"EPA por pase", repa:"EPA por carrera", sr:"tasa de éxito", rz:"TD en zona roja", t3:"conversión en 3ª",
+  proe:"pase sobre lo esperado", aepa:"EPA por jugada permitido", apepa:"EPA por pase permitido", arepa:"EPA por carrera permitido",
+  asr:"tasa de éxito permitida", arz:"TD en zona roja permitidos", at3:"conversión en 3ª permitida"};
 // per-game production and allowed; rank 1 = most for offense keys, least for "a…" (allowed) keys
 function teamRanks(inScope) {
-  const o = {}, get = t => o[t] ||= {n:0, py:0, ry:0, pts:0, apy:0, ary:0, apts:0};
+  const o = {}, get = t => o[t] ||= {n:0, py:0, ry:0, pts:0, apy:0, ary:0, apts:0,
+    ef: {pn:0, pe:0, ps:0, rn:0, re:0, rs:0, a3:0, c3:0, on:0, oe:0, rzt:0, rztd:0}, aef: {pn:0, pe:0, ps:0, rn:0, re:0, rs:0, a3:0, c3:0, rzt:0, rztd:0}};
   for (const r of TS) {
     if (!played(r.g) || !inScope(r.g)) continue;
     const home = fr(r.g.home) === r.t, opp = fr(home ? r.g.away : r.g.home), own = home ? r.g.hs : r.g.as;
@@ -753,13 +773,30 @@ function teamRanks(inScope) {
     a.n++; a.py += r.py; a.ry += r.ry; a.pts += own;
     b.apy += r.py; b.ary += r.ry; b.apts += own;
   }
+  for (const r of EF) {
+    if (!played(r.g) || !inScope(r.g)) continue;
+    const opp = fr(fr(r.g.home) === r.t ? r.g.away : r.g.home), a = get(r.t).ef, b = get(opp).aef;
+    for (const k in a) a[k] += r[k];
+    for (const k in b) b[k] += r[k];
+  }
+  const ratio = (x, y) => y ? x / y : null;
   const teams = Object.keys(o).filter(t => o[t].n);
-  for (const t of teams) { const a = o[t];
-    a.pg = {py: a.py/a.n, ry: a.ry/a.n, tot: (a.py+a.ry)/a.n, pts: a.pts/a.n, apy: a.apy/a.n, ary: a.ary/a.n, atot: (a.apy+a.ary)/a.n, apts: a.apts/a.n}; a.rk = {}; }
-  for (const k of RK_ALL) { const desc = !k.startsWith("a");
-    [...teams].sort((x, y) => desc ? o[y].pg[k] - o[x].pg[k] : o[x].pg[k] - o[y].pg[k]).forEach((t, i) => o[t].rk[k] = i + 1); }
+  for (const t of teams) { const a = o[t], e = a.ef, d = a.aef;
+    a.pg = {py: a.py/a.n, ry: a.ry/a.n, tot: (a.py+a.ry)/a.n, pts: a.pts/a.n, apy: a.apy/a.n, ary: a.ary/a.n, atot: (a.apy+a.ary)/a.n, apts: a.apts/a.n,
+      epa: ratio(e.pe + e.re, e.pn + e.rn), pepa: ratio(e.pe, e.pn), repa: ratio(e.re, e.rn), sr: ratio(e.ps + e.rs, e.pn + e.rn),
+      rz: ratio(e.rztd, e.rzt), t3: ratio(e.c3, e.a3), proe: ratio(e.oe, e.on),
+      aepa: ratio(d.pe + d.re, d.pn + d.rn), apepa: ratio(d.pe, d.pn), arepa: ratio(d.re, d.rn), asr: ratio(d.ps + d.rs, d.pn + d.rn),
+      arz: ratio(d.rztd, d.rzt), at3: ratio(d.c3, d.a3)};
+    a.rk = {}; }
+  for (const k of [...RK_ALL, ...EF_ALL]) { const desc = !k.startsWith("a");
+    const list = teams.filter(t => o[t].pg[k] != null);
+    list.sort((x, y) => desc ? o[y].pg[k] - o[x].pg[k] : o[x].pg[k] - o[y].pg[k]).forEach((t, i) => o[t].rk[k] = i + 1); }
   return {teams: o, count: teams.length};
 }
+// how each efficiency value is printed: EPA with sign and 2 decimals, rates as percentages
+const efFmt = (k, v) => v == null ? "—" : /epa$/.test(k) ? (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2).replace(".", ",")
+  : k === "proe" ? signed(v) + " pts" : fmtPct(v / (k === "proe" ? 100 : 1));
+const efCell = (k, a) => el("td", {}, document.createTextNode(efFmt(k, a.pg[k]) + " "), el("span", {class:"rk", text: a.rk[k] ? "#" + a.rk[k] : ""}));
 const seasonRankCache = {}, seasonPosCache = {};
 const seasonRanks = s => seasonRankCache[s + state.phase] ||= teamRanks(g => g.season === s && inPhase(g));
 const seasonPosRanks = s => seasonPosCache[s + state.phase] ||= defAllowed(g => g.season === s && inPhase(g));
@@ -767,26 +804,37 @@ const rkCell = (v, rk, d=1) => el("td", {}, document.createTextNode(fmtNum(v, d)
 // abbreviation a franchise used in a given season (OAK before LV, etc.)
 const abbrIn = (t, s) => Object.keys(standMeta[s] || {}).find(x => fr(x) === t) || t;
 
-let rkSort = "tot";
+let rkSort = "tot", rkView = "vol";
 function renderRankings() {
   const host = $("rk"); host.replaceChildren();
   const R = teamRanks(g => inSeason(g) && inPhase(g));
-  host.append(el("div", {class:"panel-head"}, el("h3", {text: "Ofensivas y defensivas " + seasonLabel(state.season)}),
-    el("span", {class:"sec-note", text: `Promedios por partido · ${state.phase === "REG" ? "temporada regular" : "incluye playoffs"}. #1 es la ofensiva que más produce o la defensiva que menos permite. Yardas por aire netas de sacks. Haz clic en un encabezado para ordenar.`})));
+  const eff = rkView === "eff" && EF.length;
+  const seg = el("div", {class:"seg", role:"group", "aria-label":"Tipo de ranking"},
+    ...[["vol", "Volumen"], ["eff", "Eficiencia (EPA)"]].filter(([v]) => v === "vol" || EF.length).map(([v, lbl]) => {
+      const b = el("button", {type:"button", "aria-pressed": String(rkView === v), text: lbl});
+      b.addEventListener("click", () => { rkView = v; rkSort = v === "eff" ? "epa" : "tot"; renderRankings(); }); return b; }));
+  host.append(el("div", {class:"panel-head"}, el("h3", {text: "Ofensivas y defensivas " + seasonLabel(state.season)}), seg,
+    el("span", {class:"sec-note", text: `${state.phase === "REG" ? "Temporada regular" : "Incluye playoffs"}. #1 es la ofensiva que más produce o la defensiva que menos permite. ` +
+      (eff ? "EPA: puntos esperados que suma cada jugada (pases incluyen sacks y scrambles). Éxito: jugadas con EPA positivo. Zona roja: drives que llegan a la 20 rival y terminan en TD." : "Promedios por partido; yardas por aire netas de sacks.") +
+      " Haz clic en un encabezado para ordenar."})));
   if (!R.count) { host.append(el("p", {class:"muted", text:"Sin datos en este periodo."})); return; }
-  const cols = [["pts","Puntos"], ["tot","Yds totales"], ["py","Aire"], ["ry","Tierra"], ["apts","Puntos"], ["atot","Yds totales"], ["apy","Aire"], ["ary","Tierra"]];
+  const cols = eff
+    ? [["epa","EPA/jug."], ["pepa","EPA pase"], ["repa","EPA carrera"], ["sr","Éxito"], ["rz","Zona roja"], ["t3","3ª down"],
+       ["aepa","EPA/jug."], ["apepa","EPA pase"], ["arepa","EPA carrera"], ["asr","Éxito"], ["arz","Zona roja"], ["at3","3ª down"]]
+    : [["pts","Puntos"], ["tot","Yds totales"], ["py","Aire"], ["ry","Tierra"], ["apts","Puntos"], ["atot","Yds totales"], ["apy","Aire"], ["ary","Tierra"]];
+  const half = cols.length / 2;
   const th = ([k, lbl]) => { const b = el("button", {type:"button", class:"sort" + (rkSort === k ? " on" : ""), "aria-pressed": String(rkSort === k), text: lbl});
     b.addEventListener("click", () => { rkSort = k; renderRankings(); }); return el("th", {}, b); };
-  const tbl = el("table", {class:"st rk-t"});
+  const tbl = el("table", {class:"st rk-t" + (eff ? " eff" : "")});
   tbl.append(el("thead", {},
-    el("tr", {}, el("th", {}), el("th", {}), el("th", {colspan:"4", class:"grp", text:"Ofensiva"}), el("th", {colspan:"4", class:"grp", text:"Defensiva (permitido)"})),
+    el("tr", {}, el("th", {}), el("th", {}), el("th", {colspan: String(half), class:"grp", text:"Ofensiva"}), el("th", {colspan: String(half), class:"grp", text:"Defensiva (permitido)"})),
     el("tr", {}, el("th", {text:"Equipo"}), el("th", {text:"PJ"}), ...cols.map(th))));
-  const teams = Object.keys(R.teams).filter(t => R.teams[t].n).sort((a, b) => R.teams[a].rk[rkSort] - R.teams[b].rk[rkSort]);
+  const teams = Object.keys(R.teams).filter(t => R.teams[t].n).sort((a, b) => (R.teams[a].rk[rkSort] ?? 99) - (R.teams[b].rk[rkSort] ?? 99));
   const tb = el("tbody");
   for (const t of teams) { const a = R.teams[t], shown = isHist() ? t : abbrIn(t, state.season);
     const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + name(shown)},
       el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(shown)}`}), el("span", {class:"abbr", text: shown}), el("span", {class:"tname", text: name(shown).split(" ").slice(-1)[0]}))),
-      el("td", {text: a.n}), ...cols.map(([k]) => rkCell(a.pg[k], a.rk[k])));
+      el("td", {text: a.n}), ...cols.map(([k]) => eff ? efCell(k, a) : rkCell(a.pg[k], a.rk[k])));
     if (t === state.team) tr.classList.add("sel");
     const pick = () => { setState({team: t, ...(t === state.rival ? {rival: ""} : {})}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
     tr.addEventListener("click", pick);
@@ -809,6 +857,16 @@ function renderTeamRank() {
       el("tr", {}, el("td", {text:"Ofensiva"}), ...["tot","py","ry","pts"].map(k => rkCell(a.pg[k], a.rk[k]))),
       el("tr", {}, el("td", {text:"Defensiva (permite)"}), ...["atot","apy","ary","apts"].map(k => rkCell(a.pg[k], a.rk[k])))));
   host.append(el("div", {class:"tbl-wrap"}, tbl));
+  if (!EF.length || a.pg.epa == null) return;
+  const te = el("table", {class:"splits"});
+  te.append(el("caption", {text:"Eficiencia por jugada"}),
+    el("thead", {}, el("tr", {}, ...["", "EPA/jugada", "EPA pase", "EPA carrera", "Éxito", "TD en zona roja", "Conversión 3ª"].map(h => el("th", {text:h})))),
+    el("tbody", {},
+      el("tr", {}, el("td", {text:"Ofensiva"}), ...["epa","pepa","repa","sr","rz","t3"].map(k => efCell(k, a))),
+      el("tr", {}, el("td", {text:"Defensiva (permite)"}), ...["aepa","apepa","arepa","asr","arz","at3"].map(k => efCell(k, a)))));
+  host.append(el("div", {class:"tbl-wrap"}, te),
+    el("p", {class:"chart-desc", text: `Pase sobre lo esperado en 1ª y 2ª con el partido abierto: ${efFmt("proe", a.pg.proe)} (#${a.rk.proe ?? "—"} de ${R.count}, 1 = el que más pasa). ` +
+      "Un valor alto indica una ofensiva que prefiere pasar; suele favorecer los overs de yardas de pase de su QB y receptores."}));
 }
 
 // ---------- players ----------
@@ -822,6 +880,9 @@ if (PD) {
     const r = {p: players[a[0]], g: games[a[1]], team: a[2], opp: a[3]};
     COLS.forEach((c, k) => r[c] = a[4 + k]);
     r.ts = a[4 + COLS.length]; r.ays = a[5 + COLS.length];
+    r.snap = a[6 + COLS.length];  // offensive snap share 0-100, or null
+    const x = a[7 + COLS.length];  // expected production (ffverse opportunity model), or null
+    if (x) (PD.xcols || []).forEach((c, k) => r["x_" + c] = x[k]);
     r.p.rows.push(r); plRows.push(r);
   }
   for (const p of players) {
@@ -870,10 +931,35 @@ function injTag(p) {
   return el("span", {class: "inj " + (st === "Out" || st === "Doubtful" ? "out" : "q"),
     title: `Reporte de lesiones, semana ${wk}` + (prac ? ` · práctica: ${prac}` : ""), text: label + (body ? " · " + body : "")});
 }
+// place on the team's latest depth chart, e.g. "WR1"
+function depthTag(p) {
+  const d = PD && PD.depth && PD.depth[p.i]; if (!d) return null;
+  return el("span", {class:"badge" + (d[1] === 1 ? " starter" : ""), title:"Depth chart más reciente del equipo", text: d[0] + d[1]});
+}
+
+// expected production for a market from the opportunity model (null when the model has no value)
+const MK_EXP = {passing_yards:["pass_yards_gained_exp"], passing_tds:["pass_touchdown_exp"], completions:["pass_completions_exp"],
+  receptions:["receptions_exp"], receiving_yards:["rec_yards_gained_exp"], rushing_yards:["rush_yards_gained_exp"],
+  rush_rec:["rush_yards_gained_exp","rec_yards_gained_exp"], pass_rush:["pass_yards_gained_exp","rush_yards_gained_exp"],
+  anytime_td:["rush_touchdown_exp","rec_touchdown_exp"]};
+function expOf(r, mk) {
+  const cs = MK_EXP[mk]; if (!cs) return null;
+  let s = 0; for (const c of cs) { const v = r["x_" + c]; if (v == null) return null; s += v; }
+  return s;
+}
+// actual minus expected per game over a set of games that have the model's value
+function vsExpected(rows, mk) {
+  const rs = rows.filter(r => expOf(r, mk) != null); if (!rs.length) return null;
+  const act = rs.reduce((s, r) => s + MK[mk].f(r), 0) / rs.length, exp = rs.reduce((s, r) => s + expOf(r, mk), 0) / rs.length;
+  return {n: rs.length, act, exp, diff: act - exp};
+}
 
 // next scheduled game of each franchise
+// nflverse stats can arrive before games.csv carries the score: a game with stats has been played
+const statsGames = new Set([...TS.map(r => r.g), ...EF.map(r => r.g), ...plRows.map(r => r.g)]);
+const upcoming = g => !played(g) && g.date >= lastPlayed && !statsGames.has(g);
 const nextGame = {};
-for (const g of games) if (!played(g) && g.date >= lastPlayed)
+for (const g of games) if (upcoming(g))
   for (const t of [fr(g.home), fr(g.away)]) if (!nextGame[t] || g.date < nextGame[t].date) nextGame[t] = g;
 const oppIn = (g, T) => fr(g.home) === T ? g.away : g.home;
 const dateShort = d => new Date(d + "T12:00:00").toLocaleDateString("es", {day:"numeric", month:"short"});
@@ -953,6 +1039,14 @@ function nextOppCell(p) {
   return el("span", {title: rk ? `${opp} permite ${fmtNum(defPerGame(d, p.pos, DEF_MK[p.pos]))} ${DEF_LABEL[p.pos]} por partido a ${p.pos} en sus últimos ${d.n} partidos; puesto ${rk} de ${recentDef.__count} (1 = la que menos permite)` : ""},
     document.createTextNode((fr(ng.home) === fr(p.team) ? "vs " : "@ ") + opp + " "), rk ? el("span", {class:"badge", text: `#${rk} vs ${p.pos}`}) : null);
 }
+// actual minus expected per game; a big positive gap tends to shrink (and vice versa)
+function expCell(rows, mk) {
+  const v = vsExpected(rows, mk);
+  if (!v) return el("td", {class:"muted", text:"—", title: MK_EXP[mk] ? "Sin datos del modelo de oportunidad" : "El modelo no estima este mercado"});
+  const d = mk === "anytime_td" || mk === "passing_tds" ? 2 : 1;
+  return el("td", {class: Math.abs(v.diff) < (d === 2 ? 0.1 : 3) ? "" : v.diff > 0 ? "pos" : "neg",
+    title: `Real ${fmtNum(v.act, d)} frente a esperado ${fmtNum(v.exp, d)} por partido en ${v.n} partidos`, text: signed(v.diff, d)});
+}
 function trendPill(h) {
   if (h.n < 5) return el("span", {class:"muted", text:"Poca muestra"});
   const r = h.o / h.n;
@@ -1011,7 +1105,7 @@ function renderProps() {
     ta, el("div", {class:"btn-row"}, bulkBtn, copyBtn, bulkMsg)));
   // table
   const tbl = el("table", {class:"st props-t"});
-  tbl.append(el("thead", {}, el("tr", {}, ...["Jugador","Mercado","Línea","Próximo rival","Media últ. 10","Últ. 5","Últ. 10",String(CUR),String(CUR-1),"Tendencia",""].map(h => el("th", {text:h})))));
+  tbl.append(el("thead", {}, el("tr", {}, ...["Jugador","Mercado","Línea","Próximo rival","Media últ. 10","vs esperado","Últ. 5","Últ. 10",String(CUR),String(CUR-1),"Tendencia",""].map(h => el("th", {text:h})))));
   const tb = el("tbody");
   list.forEach((x, k) => {
     const p = playerById[x.id], w = windows(p, x.m, x.line);
@@ -1019,9 +1113,9 @@ function renderProps() {
     const del = el("button", {type:"button", class:"del", "aria-label": `Quitar ${p.nm} ${MK[x.m].name}`, text:"×"});
     del.addEventListener("click", e => { e.stopPropagation(); const cur = [...currentProps()]; cur.splice(k, 1); setProps(cur); });
     const tr = el("tr", {tabindex:"0", "aria-label": `Ver ${p.nm}`},
-      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(p.team)}`}), el("b", {text: p.nm}), el("span", {class:"muted", text: `${p.pos} · ${p.team}`}), injTag(p))),
+      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(p.team)}`}), el("b", {text: p.nm}), el("span", {class:"muted", text: `${p.pos} · ${p.team}`}), depthTag(p), injTag(p))),
       el("td", {text: MK[x.m].name}), el("td", {text: String(x.line).replace(".", ",")}), el("td", {}, nextOppCell(p)),
-      el("td", {text: fmtNum(w[1][1].avg)}), hcell(w[0][1]), hcell(w[1][1]), hcell(w[2][1]), hcell(w[3][1]), el("td", {}, trendPill(w[1][1])), el("td", {}, del));
+      el("td", {text: fmtNum(w[1][1].avg)}), expCell(pRows(p).slice(-10), x.m), hcell(w[0][1]), hcell(w[1][1]), hcell(w[2][1]), hcell(w[3][1]), el("td", {}, trendPill(w[1][1])), el("td", {}, del));
     if (state.player === p.id && state.pmarket === x.m) tr.classList.add("sel");
     const pick = () => { setState({player: p.id, pmarket: x.m, pline: x.line}); $("pdetail").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
     tr.addEventListener("click", pick);
@@ -1053,6 +1147,9 @@ function propChart(host, rows, mk, line) {
     const inProgress = s === lastSeason && !lastSeasonDone;
     const lines = [...kinds, "apts"].map(k => { const x = oppRank(r, k); return x && el("li", {},
       el("b", {text: `#${x.rk} de ${x.n}`}), document.createTextNode(` en ${RK_LABEL[k]}: ${fmtNum(x.v)} por partido`)); });
+    // efficiency allowed against the same kind of play (EPA per dropback / per designed run)
+    for (const k of kinds.map(k => k === "apy" ? "apepa" : "arepa")) { const x = oppRank(r, k);
+      if (x && x.v != null) lines.push(el("li", {}, el("b", {text: `#${x.rk} de ${x.n}`}), document.createTextNode(` en ${RK_LABEL[k]}: ${efFmt(k, x.v)}`))); }
     const pr = PD ? seasonPosRanks(s)[opp] : null, prk = pr?.rank?.[r.p.pos];
     if (prk) lines.push(el("li", {}, el("b", {text: `#${prk}`}), document.createTextNode(` contra ${r.p.pos}: ${fmtNum(defPerGame(pr, r.p.pos, DEF_MK[r.p.pos]))} ${DEF_LABEL[r.p.pos]} por partido`)));
     pinBox.replaceChildren(
@@ -1126,9 +1223,23 @@ function usageRows(p) {
     : p.pos === "RB"
       ? [["Acarreos / partido", r => r.carries, fmtNum], ["Envíos (targets) / partido", r => r.targets, fmtNum], ["Reparto de envíos del equipo", r => r.ts, fmtPct]]
       : [["Envíos (targets) / partido", r => r.targets, fmtNum], ["Reparto de envíos del equipo", r => r.ts, fmtPct], ["Reparto de yardas aéreas", r => r.ays, fmtPct]];
-  return metrics.map(([nm, f, fmt]) => el("tr", {}, el("td", {text: nm}), ...sets.map(([, rows]) => {
+  const snapRow = el("tr", {}, el("td", {text:"% de snaps ofensivos"}), ...sets.map(([, rows]) => {
+    const s = rows.filter(r => r.snap != null); return el("td", {text: s.length ? fmtPct(s.reduce((a, r) => a + r.snap, 0) / s.length / 100) : "—"}); }));
+  return [snapRow, ...metrics.map(([nm, f, fmt]) => el("tr", {}, el("td", {text: nm}), ...sets.map(([, rows]) => {
     if (!f) { const att = rows.reduce((s, r) => s + r.attempts, 0); return el("td", {text: att ? fmtNum(rows.reduce((s, r) => s + r.passing_yards, 0) / att) : "—"}); }
-    return el("td", {text: rows.length ? fmt(per(rows, f)) : "—"}); })));
+    return el("td", {text: rows.length ? fmt(per(rows, f)) : "—"}); })))];
+}
+// real vs expected production for the market, by period
+function expectedTable(p, mk) {
+  if (!MK_EXP[mk]) return el("p", {class:"chart-desc", text:`El modelo de oportunidad no estima “${MK[mk].name.toLowerCase()}”.`});
+  const rs = pRows(p), d = mk === "anytime_td" || mk === "passing_tds" ? 2 : 1;
+  const sets = [["Últimos 5", rs.slice(-5)], ["Últimos 10", rs.slice(-10)], [String(CUR), rs.filter(r => r.g.season === CUR)], [String(CUR - 1), rs.filter(r => r.g.season === CUR - 1)]];
+  const t = el("table", {class:"splits"});
+  t.append(el("caption", {text:"Real frente a esperado"}), el("thead", {}, el("tr", {}, ...["Periodo","PJ","Real","Esperado","Diferencia"].map(h => el("th", {text:h})))),
+    el("tbody", {}, ...sets.map(([lbl, rows]) => { const v = vsExpected(rows, mk);
+      return el("tr", {}, el("td", {text: lbl}), el("td", {text: v ? v.n : 0}), el("td", {text: v ? fmtNum(v.act, d) : "—"}), el("td", {text: v ? fmtNum(v.exp, d) : "—"}),
+        el("td", {class: v ? (v.diff > 0 ? "pos" : v.diff < 0 ? "neg" : "") : "", text: v ? signed(v.diff, d) : "—"})); })));
+  return t;
 }
 
 function renderPlayerDetail() {
@@ -1150,7 +1261,7 @@ function renderPlayerDetail() {
   const addBtn = el("button", {type:"button", class:"btn", text:"Agregar a mi lista"});
   addBtn.addEventListener("click", () => setProps([...(props || []), {id: p.id, m: mk, line}]));
   const ng = nextGame[fr(p.team)];
-  host.append(el("div", {class:"panel-head"}, el("h3", {text: p.nm}), el("span", {class:"sec-note", text: `${p.pos} · ${name(p.team)}`}), injTag(p)));
+  host.append(el("div", {class:"panel-head"}, el("h3", {text: p.nm}), el("span", {class:"sec-note", text: `${p.pos} · ${name(p.team)}`}), depthTag(p), injTag(p)));
   host.append(el("div", {class:"prop-form"},
     el("div", {class:"field grow"}, el("label", {for:"pd-player", text:"Jugador"}), search),
     el("div", {class:"field"}, el("label", {for:"pd-market", text:"Mercado"}), selMk),
@@ -1185,17 +1296,19 @@ function renderPlayerDetail() {
     splitRow("Total ≥ 47", rs.filter(r => r.g.total != null && r.g.total >= 47), mk, line), splitRow("Total < 47", rs.filter(r => r.g.total != null && r.g.total < 47), mk, line)));
   const use = el("table", {class:"splits"});
   use.append(el("caption", {text:"Uso"}), el("thead", {}, el("tr", {}, ...["", "Últimos 5", String(CUR), String(CUR - 1)].map(h => el("th", {text:h})))), el("tbody", {}, ...usageRows(p)));
-  grid.append(left, el("div", {class:"chart-card"}, el("div", {class:"tbl-wrap"}, spl), el("div", {class:"tbl-wrap"}, use)));
+  grid.append(left, el("div", {class:"chart-card"}, el("div", {class:"tbl-wrap"}, spl), el("div", {class:"tbl-wrap"}, use),
+    el("div", {class:"tbl-wrap"}, expectedTable(p, mk)),
+    el("p", {class:"chart-desc", text:"Esperado: lo que su volumen (envíos, acarreos, profundidad y zona del campo) produce en promedio según el modelo de oportunidad de ffverse. Si rinde muy por encima de lo esperado, tiende a regresar hacia abajo, y al revés."})));
   host.append(grid);
   // recent game log
   const log = el("table", {class:"log"});
   const cols = p.pos === "QB" ? [["C/I", r => `${r.completions}/${r.attempts}`], ["Yds pase", r => r.passing_yards], ["TD", r => r.passing_tds], ["INT", r => r.passing_interceptions], ["Yds tierra", r => r.rushing_yards]]
     : p.pos === "RB" ? [["Acarreos", r => r.carries], ["Yds tierra", r => r.rushing_yards], ["Rec/Env", r => `${r.receptions}/${r.targets}`], ["Yds rec", r => r.receiving_yards], ["TD", r => r.rushing_tds + r.receiving_tds]]
     : [["Rec/Env", r => `${r.receptions}/${r.targets}`], ["Yds rec", r => r.receiving_yards], ["TD", r => r.receiving_tds + r.rushing_tds], ["% envíos", r => fmtPct(r.ts)]];
-  log.append(el("thead", {}, el("tr", {}, ...["Fecha","Rival","Línea equipo", ...cols.map(c => c[0])].map(h => el("th", {text:h})))));
+  log.append(el("thead", {}, el("tr", {}, ...["Fecha","Rival","Línea equipo","% snaps", ...cols.map(c => c[0])].map(h => el("th", {text:h})))));
   log.append(el("tbody", {}, ...pRows(p).slice(-10).reverse().map(r => el("tr", {},
     el("td", {text: `${dateShort(r.g.date)} ${String(r.g.season).slice(2)}`}), el("td", {text: (fr(r.g.home) === fr(r.team) ? "vs " : "@ ") + r.opp}), el("td", {text: lineTxt(teamLine(r))}),
-    ...cols.map(([, f]) => el("td", {text: f(r)}))))));
+    el("td", {text: r.snap == null ? "—" : r.snap + "%"}), ...cols.map(([, f]) => el("td", {text: f(r)}))))));
   host.append(el("h3", {text:"Últimos 10 partidos"}), el("div", {class:"tbl-wrap"}, log));
 }
 
@@ -1256,7 +1369,7 @@ function renderGameLines() {
   const byDate = (a, b) => a.date.localeCompare(b.date);
   const teamAll = games.filter(g => played(g) && inPhase(g) && involves(g, T)).sort(byDate);
   const base = R ? teamAll.filter(g => involves(g, R)) : teamAll;
-  const ng = games.filter(g => !played(g) && g.date >= lastPlayed && involves(g, T) && (!R || involves(g, R))).sort(byDate)[0];
+  const ng = games.filter(g => upcoming(g) && involves(g, T) && (!R || involves(g, R))).sort(byDate)[0];
   const opp = R || (ng ? fr(oppIn(ng, T)) : "");
   const oppName = opp ? opp : "rival";
   const tHome = state.ghome ? state.ghome === "T" : ng ? fr(ng.home) === T : true;
@@ -1288,7 +1401,7 @@ function renderGameLines() {
   if (ng) host.append(el("p", {class:"chart-desc", text: `Próximo partido: ${fr(ng.home) === T ? "vs" : "@"} ${name(oppIn(ng, T))}, ${dateShort(ng.date)}` +
     (ng.spread != null ? ` · línea en games.csv: ${ng.home} ${lineTxt(-ng.spread)}, total ${String(ng.total).replace(".", ",")}` : " · sin línea publicada todavía") +
     (state.gspread == null && state.gtotal == null && ng.spread != null ? ". Los campos parten de esa línea; cámbialos por la tuya." : ".")}));
-  if (!base.length) { host.append(el("p", {class:"muted", text:"No hay partidos jugados entre estos equipos."})); return; }
+  if (!base.length) { host.append(el("p", {class:"muted", text:"No hay partidos jugados entre estos equipos."}), gameContext(ng, T, tHome)); return; }
 
   // with the entered lines, applied to past games
   const evalN = gs => { let c = 0, cn = 0, o = 0, on = 0, m = 0, pts = 0, w = 0, l = 0, t = 0;
@@ -1326,13 +1439,97 @@ function renderGameLines() {
     el("tbody", {}, ...sit.map(([lbl, f]) => { const tr = el("tr", {}, el("td", {text: lbl}), ...cols.map(([, gs, N]) => { const [a, b] = ats(gs, f, N); return fracEl(a, b); }));
       if (now.includes(lbl)) tr.classList.add("now"); return tr; })));
   host.append(el("div", {class:"team-grid"}, el("div", {class:"tbl-wrap"}, tA), el("div", {class:"tbl-wrap"}, tB)),
-    el("p", {class:"chart-desc", text: `“Últimos 10/20” en la tabla de la derecha son los últimos partidos de ${T} en cada situación, contra cualquier rival. Resaltado: la situación de ${T} con tu línea (${lineT == null ? "sin spread" : lineT < 0 ? "favorito" : lineT > 0 ? "underdog" : "pick'em"}, ${tHome ? "local" : "visitante"}). Los empates con la línea (push) no cuentan en los porcentajes.`}));
+    el("p", {class:"chart-desc", text: `“Últimos 10/20” en la tabla de la derecha son los últimos partidos de ${T} en cada situación, contra cualquier rival. Resaltado: la situación de ${T} con tu línea (${lineT == null ? "sin spread" : lineT < 0 ? "favorito" : lineT > 0 ? "underdog" : "pick'em"}, ${tHome ? "local" : "visitante"}). Los empates con la línea (push) no cuentan en los porcentajes.`}),
+    gameContext(ng, T, tHome));
+}
+
+// ---------- game context: stadium, weather, referee, rest, divisional ----------
+const CTX_FIRST = 2006;  // moneylines and complete weather/referee data start here
+let ctxGames = null;
+const ctxBase = () => ctxGames ||= games.filter(g => played(g) && g.spread != null && g.total != null && g.season >= CTX_FIRST);
+const covered = g => g.roof === "dome" || g.roof === "closed";
+const ROOF_ES = {outdoors:"Al aire libre", open:"Techo abierto", dome:"Domo", closed:"Techo cerrado"};
+function rateOf(gs, f) { let w = 0, n = 0; for (const g of gs) { const v = f(g); if (v == null) continue; n++; if (v) w++; } return {w, n, r: n ? w / n : null}; }
+const isOver = g => { const d = g.hs + g.as - g.total; return d === 0 ? null : d > 0; };
+const homeCovers = g => { const d = g.hs - g.as - g.spread; return d === 0 ? null : d > 0; };
+const dogCovers = g => { if (!g.spread) return null; const d = g.hs - g.as - g.spread; return d === 0 ? null : g.spread > 0 ? d < 0 : d > 0; };
+// cover rate of the team with a given rest difference (each game counted from both sides)
+function restCover(bucket) { let w = 0, n = 0;
+  for (const g of ctxBase()) { if (g.hrest == null || g.arest == null) continue; const hc = homeCovers(g); if (hc == null) continue;
+    const dh = g.hrest - g.arest;
+    if (bucket(dh)) { n++; if (hc) w++; }
+    if (bucket(-dh)) { n++; if (!hc) w++; } }
+  return {w, n, r: n ? w / n : null}; }
+const restBucket = d => d >= 3 ? [x => x >= 3, "3+ días más de descanso"] : d <= -3 ? [x => x <= -3, "3+ días menos de descanso"] : [x => x > -3 && x < 3, "descanso similar (±2 días)"];
+const windBucket = w => w >= 15 ? [g => g.wind >= 15, "≥ 15 mph"] : w >= 10 ? [g => g.wind >= 10 && g.wind < 15, "10–14 mph"] : [g => g.wind < 10, "< 10 mph"];
+const tempBucket = t => t <= 32 ? [g => g.temp <= 32, "≤ 32 °F (0 °C)"] : t < 60 ? [g => g.temp > 32 && g.temp < 60, "33–59 °F"] : [g => g.temp >= 60, "≥ 60 °F (16 °C)"];
+
+function gameContext(ng, T, tHome) {
+  const box = el("div", {class:"ctx"});
+  const G = ctxBase(), lastYr = Math.max(...G.map(g => g.season));
+  const baseOver = rateOf(G, isOver), baseDog = rateOf(G, dogCovers);
+  const exposedWx = G.filter(g => !covered(g) && g.wind != null && g.temp != null);
+  const roof = ng ? ng.roof : "";
+  const isCovered = roof === "dome" || roof === "closed";
+  // referee list: officials with at least 30 games in the sample
+  const refCount = {}; for (const g of G) if (g.ref) refCount[g.ref] = (refCount[g.ref] || 0) + 1;
+  // active referees only: at least 30 games in the sample and one in the last two seasons
+  const recentRef = new Set(G.filter(g => g.season >= lastYr - 1).map(g => g.ref));
+  const refs = Object.keys(refCount).filter(r => refCount[r] >= 30 && recentRef.has(r)).sort((a, b) => a.localeCompare(b, "es"));
+  const ref = state.gref != null ? state.gref : ng && ng.ref && refs.includes(ng.ref) ? ng.ref : "";
+  const inW = el("input", {id:"gc-wind", type:"number", min:"0", step:"1", value: state.gwind ?? "", placeholder:"mph", "aria-label":"Viento previsto en mph"});
+  inW.addEventListener("change", () => { const v = parseFloat(inW.value); setState({gwind: isNaN(v) ? null : v}); });
+  const inTp = el("input", {id:"gc-temp", type:"number", step:"1", value: state.gtemp ?? "", placeholder:"°F", "aria-label":"Temperatura prevista en °F"});
+  inTp.addEventListener("change", () => { const v = parseFloat(inTp.value); setState({gtemp: isNaN(v) ? null : v}); });
+  const selRef = el("select", {id:"gc-ref", "aria-label":"Árbitro principal"}, el("option", {value:"", text:"Sin elegir"}), ...refs.map(r => el("option", {value:r, text:`${r} (${refCount[r]})`})));
+  selRef.value = ref; selRef.addEventListener("change", () => setState({gref: selRef.value}));
+  box.append(el("h3", {text:"Contexto del partido"}),
+    el("p", {class:"chart-desc", text:`Cómo salieron históricamente (${CTX_FIRST}–${lastYr}, ${G.length} partidos con línea) los partidos con estas condiciones, frente a las líneas del mercado de cada partido. El pronóstico del clima y el árbitro asignado no vienen en los datos del calendario: escríbelos cuando se publiquen.`}),
+    el("div", {class:"prop-form"},
+      el("div", {class:"field narrow"}, el("label", {for:"gc-wind", text:"Viento previsto"}), inW),
+      el("div", {class:"field narrow"}, el("label", {for:"gc-temp", text:"Temperatura (°F)"}), inTp),
+      el("div", {class:"field"}, el("label", {for:"gc-ref", text:"Árbitro principal"}), selRef)));
+  const rows = [];
+  const pctTxt = x => x.n ? fmtPct(x.r) : "—";
+  const vs = (x, b) => x.n && b.n ? signed((x.r - b.r) * 100) + " pts" : "—";
+  const row = (factor, now, what, x, b, flag) => { const tr = el("tr", {}, el("td", {text: factor}), el("td", {text: now}), el("td", {}, document.createTextNode(what + " "), el("b", {text: pctTxt(x)})),
+      el("td", {class: x.n && b.n && Math.abs(x.r - b.r) >= .02 ? (x.r > b.r ? "pos" : "neg") : "", text: vs(x, b)}), el("td", {text: x.n})); if (flag) tr.classList.add("now"); rows.push(tr); };
+  // stadium
+  if (ng && roof) { const x = rateOf(G.filter(g => covered(g) === isCovered), isOver); row("Estadio", ROOF_ES[roof] || roof, "Over", x, baseOver, false); }
+  // wind and temperature only matter outdoors
+  if (isCovered) rows.push(el("tr", {}, el("td", {text:"Viento y temperatura"}), el("td", {text:"Techado"}), el("td", {colspan:"3", class:"muted", text:"No aplican bajo techo."})));
+  else {
+    const allWx = rateOf(exposedWx, isOver);
+    if (state.gwind != null) { const [f, lbl] = windBucket(state.gwind); row("Viento", lbl, "Over", rateOf(exposedWx.filter(f), isOver), allWx, true); }
+    else for (const w of [0, 10, 15]) { const [f, lbl] = windBucket(w); row("Viento", lbl, "Over", rateOf(exposedWx.filter(f), isOver), allWx, false); }
+    if (state.gtemp != null) { const [f, lbl] = tempBucket(state.gtemp); row("Temperatura", lbl, "Over", rateOf(exposedWx.filter(f), isOver), allWx, true); }
+  }
+  // referee
+  if (ref) { const rg = G.filter(g => g.ref === ref);
+    row("Árbitro", ref, "Over", rateOf(rg, isOver), baseOver, true);
+    row("Árbitro", ref, "Local cubre", rateOf(rg, homeCovers), rateOf(G, homeCovers), true); }
+  // rest
+  if (ng && ng.hrest != null && ng.arest != null) {
+    const mine = tHome ? ng.hrest : ng.arest, theirs = tHome ? ng.arest : ng.hrest, [f, lbl] = restBucket(mine - theirs);
+    // with similar rest both sides fall in the same group, so its cover rate is 50% by construction
+    if (Math.abs(mine - theirs) < 3) rows.push(el("tr", {}, el("td", {text:"Descanso"}), el("td", {text: `${T}: ${mine} días vs ${theirs}`}),
+      el("td", {colspan:"3", class:"muted", text:"Sin ventaja de descanso (diferencia menor a 3 días)."})));
+    else row("Descanso", `${T}: ${mine} días vs ${theirs}`, `Equipo con ${lbl} cubre`, restCover(f), {n: 1, r: .5}, true);
+  }
+  // divisional
+  if (ng) { const dv = !!ng.div; row("Divisional", dv ? "Sí" : "No", "Underdog cubre", rateOf(G.filter(g => !!g.div === dv), dogCovers), baseDog, dv); }
+  const t = el("table", {class:"splits"});
+  t.append(el("thead", {}, el("tr", {}, ...["Factor","Este partido","Histórico","vs promedio","Partidos"].map(h => el("th", {text:h})))), el("tbody", {}, ...rows));
+  box.append(el("div", {class:"tbl-wrap"}, t),
+    el("p", {class:"chart-desc", text:`Promedios de referencia: over ${pctTxt(baseOver)}, underdog cubre ${pctTxt(baseDog)}; para descanso, 50%. Muestras de menos de 150 partidos (por ejemplo, un árbitro) llevan mucho ruido: úsalas como contexto, no como señal por sí solas.`}));
+  if (!ng) box.append(el("p", {class:"muted", text:"No hay próximo partido en el calendario para completar estadio, descanso y divisional."}));
+  return box;
 }
 
 // ---------- controls ----------
-const TRANSIENT = ["pline", "gspread", "gtotal", "ghome"];
+const TRANSIENT = ["pline", "gspread", "gtotal", "ghome", "gwind", "gtemp", "gref"];
 function setState(p) {
-  if (("team" in p || "rival" in p) && !("gspread" in p)) Object.assign(state, {gspread: null, gtotal: null, ghome: null});
+  if (("team" in p || "rival" in p) && !("gspread" in p)) Object.assign(state, {gspread: null, gtotal: null, ghome: null, gwind: null, gtemp: null, gref: null});
   Object.assign(state, p); for (const k in p) if (!TRANSIENT.includes(k)) store.set(k, state[k]); render();
 }
 function render() {
