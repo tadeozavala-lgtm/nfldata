@@ -2,15 +2,19 @@
 """Build the "Pizarra NFL" dashboard: a single self-contained HTML page with
 standings, betting trends, per-team detail and player props from 2002 on.
 
-Team and game data come from this repo's data/games.csv, data/standings.csv,
-data/teams.csv and data/teamcolors.csv (standard library only).
+Games (scores, lines, weather, referees) come from nflverse's schedule release
+through nflreadpy, which is the same table as this repo's data/games.csv but
+does not depend on this fork being synced; data/games.csv is the fallback.
+Standings, team names and colors come from data/standings.csv, data/teams.csv
+and data/teamcolors.csv.
 
 Player data (weekly stats for QB/RB/WR/TE with snap share and expected
 production, the latest injury report and depth charts), per-game team
 passing/rushing yards and play-by-play efficiency (EPA, success rate, red
 zone, third downs, pass rate over expected) are downloaded from nflverse
 releases with nflreadpy (`pip install nflreadpy`). Without nflreadpy, or with
---no-players, the page is built without those sections.
+--no-players, the page is built offline from the local CSVs only, without
+those sections.
 
 Usage:
     python3 code/pizarra/build_pizarra.py [-o OUTPUT] [--no-players]
@@ -45,8 +49,25 @@ def rows(name):
         return list(csv.DictReader(f))
 
 
-def build_data():
-    game_rows = [r for r in rows("games.csv") if int(r["season"]) >= FIRST_SEASON]
+def schedule_rows(remote):
+    """Games from nflverse's schedule release (the same table as data/games.csv, but it
+    doesn't wait for this fork to sync); falls back to the local CSV when unavailable."""
+    if remote:
+        try:
+            import nflreadpy as nfl
+            sched = nfl.load_schedules(True)
+            # same shape as csv.DictReader rows: every value a string, missing values ""
+            out = [{k: "" if v is None else str(v) for k, v in r.items()} for r in sched.iter_rows(named=True)]
+            last = max((r["gameday"] for r in out if r["home_score"]), default="?")
+            print(f"Schedule: {len(out)} games from nflverse (last played {last})")
+            return out
+        except Exception as e:  # ImportError, network, ...
+            print(f"Schedule from nflverse unavailable ({e}); using data/games.csv")
+    return rows("games.csv")
+
+
+def build_data(remote=True):
+    game_rows = [r for r in schedule_rows(remote) if int(r["season"]) >= FIRST_SEASON]
     games = [
         [
             int(r["season"]), r["game_type"], int(r["week"]), r["gameday"],
@@ -275,10 +296,11 @@ def build_efficiency(game_index):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-o", "--output", type=Path, default=HERE / "pizarra-nfl.html")
-    ap.add_argument("--no-players", action="store_true", help="skip the player data download")
+    ap.add_argument("--no-players", action="store_true",
+                    help="skip all nflverse downloads: local CSVs only, no player/ranking/EPA sections")
     args = ap.parse_args()
 
-    data, game_index = build_data()
+    data, game_index = build_data(remote=not args.no_players)
     data["p"] = None if args.no_players else build_players(game_index)
     data["t"] = None if args.no_players else build_team_stats(game_index)
     data["e"] = None if args.no_players else build_efficiency(game_index)

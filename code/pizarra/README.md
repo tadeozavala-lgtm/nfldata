@@ -1,6 +1,6 @@
 # Pizarra NFL
 
-Interactive HTML dashboard (Spanish UI) built from the CSVs in `data/` plus nflverse player data:
+Interactive HTML dashboard (Spanish UI) built from nflverse data plus the CSVs in `data/`:
 
 - **Clasificación**: division standings per season with W-L-T, points for/against, record against the spread (ATS) and over/under, playoff seed and result.
 - **Apuestas**: favorite win %, favorite cover %, home cover %, over % and mean spread error per season, plus trend charts for favorites and home-field advantage (actual margin vs. the market's spread).
@@ -15,7 +15,7 @@ Covers 2002 (divisional realignment) onward. Relocated teams are grouped by fran
 - **Líneas del partido** (team section): enter the home spread and the over/under; the page applies them to the team's last 5, 10 and 20 games (only head-to-head games when a rival is chosen, all its games otherwise) and shows how often it would have covered and gone over, next to its real ATS record as favorite, underdog, home and away. The fields start from the next game's line in `games.csv` when there is one. **Contexto del partido** below it compares the game's conditions with how similar games went against the market since 2006: stadium roof, forecast wind and temperature and the referee (entered by hand, since the schedule doesn't carry them before kickoff), rest difference and divisional games.
 - **Props de jugadores**: a list of player props whose lines you enter by hand (one at a time or pasted as `jugador; mercado; línea`, kept in the browser), with over rates for the last 5 and 10 games and the current and previous seasons, actual minus expected production over the last 10 games, the next opponent and its rank against the position over its last 10 games, depth-chart position and injury tags from the latest report. Selecting a prop opens the player detail: game-by-game chart against the line (click a bar to see that opponent's defensive ranks that season: against the pass or the run depending on the market, EPA allowed, points allowed and against the player's position), home/away, favorite/underdog and game-total splits, usage (snap share, targets, target share, air-yards share, carries), actual vs expected production (ffverse opportunity model) and the last 10 games.
 
-Player data (2021 on), team stats and play-by-play efficiency (2002 on), snap counts (PFR), depth charts and expected production (ffverse) come from nflverse releases through [nflreadpy](https://github.com/nflverse/nflreadpy). A full build downloads one play-by-play file per season, so it takes a few minutes.
+Games (scores, lines, weather, referees) are read from nflverse's schedule release, the same table as `data/games.csv` but without waiting for this fork to sync; `data/games.csv` is used when nflreadpy or the network is unavailable (and always with `--no-players`). Player data (2021 on), team stats and play-by-play efficiency (2002 on), snap counts (PFR), depth charts and expected production (ffverse) come from nflverse releases through [nflreadpy](https://github.com/nflverse/nflreadpy). A full build downloads one play-by-play file per season, so it takes a few minutes.
 
 ## Build
 
