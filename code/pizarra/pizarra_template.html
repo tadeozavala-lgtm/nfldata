@@ -58,7 +58,12 @@ h1{font-size:clamp(34px,6vw,52px);font-weight:700;text-transform:uppercase;lette
     repeating-linear-gradient(90deg,var(--rule-2) 0 1px,transparent 1px 2%) left bottom/100% 7px no-repeat;}
 
 /* filters */
-.filters{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:10px;display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end;border-bottom:1px solid var(--rule)}
+.filters{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:10px;border-bottom:1px solid var(--rule)}
+.filters-body{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end}
+.filters-sum{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+.filters-txt{font-weight:600;font-size:14px;color:var(--ink-2);flex:1 1 200px;min-width:0}
+.filters-sum .btn{padding:5px 12px;font-size:13px}
+.linkbtn{font:inherit;font-size:13px;font-weight:600;color:var(--accent);background:none;border:0;padding:4px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .field{display:flex;flex-direction:column;gap:4px}
 .field label,.field .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
 select{font:inherit;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:7px 30px 7px 10px;min-width:0;max-width:100%;appearance:none;
@@ -206,11 +211,16 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
   <header class="top">
     <div class="eyebrow">nflverse · nfldata</div>
     <h1>Pizarra NFL</h1>
-    <p class="lede">Clasificación, tendencias de apuestas y rendimiento por equipo desde la realineación de 2002, calculados partido a partido con <code>games.csv</code>. Haz clic en cualquier equipo de la clasificación para ver su detalle.</p>
+    <p class="lede">Clasificación, tendencias de apuestas y rendimiento por equipo desde la realineación de 2002, calculados partido a partido con datos de nflverse. Haz clic en cualquier equipo de la clasificación para ver su detalle.</p>
     <div class="yardline" aria-hidden="true"></div>
   </header>
 
   <div class="filters" role="group" aria-label="Filtros">
+    <div class="filters-sum" id="filters-sum" hidden>
+      <span class="filters-txt" id="filters-txt"></span>
+      <button type="button" class="btn ghost" id="filters-open" aria-controls="filters-body" aria-expanded="false">Cambiar filtros</button>
+    </div>
+    <div class="filters-body" id="filters-body">
     <div class="field"><label for="f-season">Temporada</label><select id="f-season"></select></div>
     <div class="field hist-only"><label for="f-window">Ventana</label><select id="f-window">
       <option value="0">Todo el histórico</option><option value="5">Últimos 5 años</option><option value="10">Últimos 10 años</option><option value="15">Últimos 15 años</option><option value="20">Últimos 20 años</option>
@@ -224,6 +234,8 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
       </div>
     </div>
     <div class="stamp" id="stamp"></div>
+    <button type="button" class="linkbtn" id="filters-close" aria-controls="filters-body" aria-expanded="true">Ocultar filtros</button>
+    </div>
   </div>
 
   <section id="standings">
@@ -529,6 +541,21 @@ function barChart(host, cfg) {
 
 // frozen table headers: offset them by the sticky filter bar, and let tables wider than their
 // box scroll inside it (where the header freezes at the box's top) instead of widening the page
+// collapsible filter bar: folded shows a one-line summary of the active filters
+function filtersSummary() {
+  const parts = [seasonLabel(state.season)];
+  if (isHist() && state.window) parts.push(`últimos ${state.window} años`);
+  parts.push(name(state.team) + (isHist() && state.rival ? " vs " + name(state.rival) : ""));
+  parts.push(state.phase === "REG" ? "Temporada regular" : "Con playoffs");
+  $("filters-txt").textContent = parts.join(" · ");
+}
+function setFiltersOpen(open, remember = true) {
+  $("filters-body").hidden = !open; $("filters-sum").hidden = open;
+  $("filters-open").setAttribute("aria-expanded", String(open)); $("filters-close").setAttribute("aria-expanded", String(open));
+  if (remember) store.set("filters", open ? "open" : "closed");
+  fitTables();
+  if (open) $("f-season").focus({preventScroll: true}); else if (remember) $("filters-open").focus({preventScroll: true});
+}
 function fitTables() {
   const f = document.querySelector(".filters");
   document.documentElement.style.setProperty("--filters-h", (f ? f.offsetHeight : 0) + "px");
@@ -1564,6 +1591,7 @@ function render() {
   renderGameLines();
   if (TS.length) { renderRankings(); renderTeamRank(); }
   if (PD) { renderTeamPlayers(); renderDefense(); renderPlayers(); }
+  filtersSummary();
   fitTables();
 }
 $("f-season").append(el("option", {value:HIST, text: "Histórico"}));
@@ -1581,6 +1609,9 @@ document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click"
 if (PD) $("pl-list").append(...[...players].sort((a, b) => b.last.localeCompare(a.last) || a.nm.localeCompare(b.nm)).map(p => el("option", {value: playerLabel(p)})));
 else { $("players").hidden = true; $("tm-players-grid").hidden = true; }
 if (!TS.length) { $("rk").hidden = true; $("tm-rank").hidden = true; }
+$("filters-open").addEventListener("click", () => setFiltersOpen(true));
+$("filters-close").addEventListener("click", () => setFiltersOpen(false));
+{ const pref = store.get("filters"); if (pref === "closed" || (!pref && matchMedia("(max-width: 700px)").matches)) setFiltersOpen(false, false); }
 const lp = new Date(lastPlayed + "T12:00:00");
 $("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
 render();
