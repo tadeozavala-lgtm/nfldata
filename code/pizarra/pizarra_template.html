@@ -58,7 +58,12 @@ h1{font-size:clamp(34px,6vw,52px);font-weight:700;text-transform:uppercase;lette
     repeating-linear-gradient(90deg,var(--rule-2) 0 1px,transparent 1px 2%) left bottom/100% 7px no-repeat;}
 
 /* filters */
-.filters{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:10px;display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end;border-bottom:1px solid var(--rule)}
+.filters{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:10px;border-bottom:1px solid var(--rule)}
+.filters-body{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end}
+.filters-sum{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+.filters-txt{font-weight:600;font-size:14px;color:var(--ink-2);flex:1 1 200px;min-width:0}
+.filters-sum .btn{padding:5px 12px;font-size:13px}
+.linkbtn{font:inherit;font-size:13px;font-weight:600;color:var(--accent);background:none;border:0;padding:4px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .field{display:flex;flex-direction:column;gap:4px}
 .field label,.field .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
 select{font:inherit;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:7px 30px 7px 10px;min-width:0;max-width:100%;appearance:none;
@@ -83,10 +88,18 @@ h2{font-size:28px;font-weight:700;text-transform:uppercase;letter-spacing:.01em}
 .conf{display:flex;flex-direction:column;gap:10px}
 .conf h3{font-size:20px;font-weight:700;letter-spacing:.04em}
 .divs{display:grid;grid-template-columns:1fr;gap:10px}
-.tbl-wrap{overflow-x:auto}
+/* Frozen headers. A table that fits keeps overflow visible so its header sticks under the
+   filter bar while the page scrolls; a table wider than its box (class "xscroll", set in
+   fitTables) scrolls inside the box instead, with the header frozen at the box's top. */
+.tbl-wrap{overflow:visible;min-width:0;max-width:100%}
+.conf,.divs>*,.team-grid>*{min-width:0}  /* let grid cells shrink so wide tables are detected */
+.tbl-wrap.xscroll{overflow:auto;max-height:min(75vh,720px);overscroll-behavior-x:contain}
+thead{position:sticky;top:calc(env(safe-area-inset-top,0px) + var(--filters-h,0px));z-index:2}
+.tbl-wrap.xscroll thead,details.tv .tbl-wrap thead{top:0}
+thead th{background:var(--surface)}
 table{border-collapse:collapse;width:100%;font-size:14px}
 caption{text-align:left;font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2);padding-bottom:4px}
-th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);font-weight:600;text-align:right;padding:4px 8px;border-bottom:1px solid var(--rule);white-space:nowrap}
+th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);font-weight:600;text-align:right;padding:4px 8px;box-shadow:inset 0 -1px 0 var(--rule);white-space:nowrap}
 td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--rule-2);white-space:nowrap}
 th:first-child,td:first-child{text-align:left}
 tbody tr:last-child td{border-bottom:0}
@@ -175,7 +188,7 @@ details.bulk{margin-bottom:12px}
 .badge.starter{background:var(--accent-wash);color:var(--accent)}
 .ctx{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule-2);padding-top:12px}
 .ctx h3{font-size:19px;font-weight:600}
-.rk-t th.grp{text-align:center;border-bottom:1px solid var(--rule);color:var(--ink-2)}
+.rk-t th.grp{text-align:center;color:var(--ink-2)}
 .rk-t td:nth-child(7),.rk-t tr:last-child th:nth-child(7){border-left:1px solid var(--rule)}
 .rk-t tr:first-child th:nth-child(4){border-left:1px solid var(--rule)}
 button.sort{font:inherit;font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;color:var(--ink-3);background:none;border:0;padding:0;cursor:pointer}
@@ -198,11 +211,16 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
   <header class="top">
     <div class="eyebrow">nflverse · nfldata</div>
     <h1>Pizarra NFL</h1>
-    <p class="lede">Clasificación, tendencias de apuestas y rendimiento por equipo desde la realineación de 2002, calculados partido a partido con <code>games.csv</code>. Haz clic en cualquier equipo de la clasificación para ver su detalle.</p>
+    <p class="lede">Clasificación, tendencias de apuestas y rendimiento por equipo desde la realineación de 2002, calculados partido a partido con datos de nflverse. Haz clic en cualquier equipo de la clasificación para ver su detalle.</p>
     <div class="yardline" aria-hidden="true"></div>
   </header>
 
   <div class="filters" role="group" aria-label="Filtros">
+    <div class="filters-sum" id="filters-sum" hidden>
+      <span class="filters-txt" id="filters-txt"></span>
+      <button type="button" class="btn ghost" id="filters-open" aria-controls="filters-body" aria-expanded="false">Cambiar filtros</button>
+    </div>
+    <div class="filters-body" id="filters-body">
     <div class="field"><label for="f-season">Temporada</label><select id="f-season"></select></div>
     <div class="field hist-only"><label for="f-window">Ventana</label><select id="f-window">
       <option value="0">Todo el histórico</option><option value="5">Últimos 5 años</option><option value="10">Últimos 10 años</option><option value="15">Últimos 15 años</option><option value="20">Últimos 20 años</option>
@@ -216,6 +234,8 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
       </div>
     </div>
     <div class="stamp" id="stamp"></div>
+    <button type="button" class="linkbtn" id="filters-close" aria-controls="filters-body" aria-expanded="true">Ocultar filtros</button>
+    </div>
   </div>
 
   <section id="standings">
@@ -519,7 +539,34 @@ function barChart(host, cfg) {
   charts.push({plot, draw});
 }
 
-let rz; new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => charts.forEach(c => c.draw())); }).observe(document.querySelector(".page"));
+// frozen table headers: offset them by the sticky filter bar, and let tables wider than their
+// box scroll inside it (where the header freezes at the box's top) instead of widening the page
+// collapsible filter bar: folded shows a one-line summary of the active filters
+function filtersSummary() {
+  const parts = [seasonLabel(state.season)];
+  if (isHist() && state.window) parts.push(`últimos ${state.window} años`);
+  parts.push(name(state.team) + (isHist() && state.rival ? " vs " + name(state.rival) : ""));
+  parts.push(state.phase === "REG" ? "Temporada regular" : "Con playoffs");
+  $("filters-txt").textContent = parts.join(" · ");
+}
+function setFiltersOpen(open, remember = true) {
+  $("filters-body").hidden = !open; $("filters-sum").hidden = open;
+  $("filters-open").setAttribute("aria-expanded", String(open)); $("filters-close").setAttribute("aria-expanded", String(open));
+  if (remember) store.set("filters", open ? "open" : "closed");
+  fitTables();
+  if (open) $("f-season").focus({preventScroll: true}); else if (remember) $("filters-open").focus({preventScroll: true});
+}
+function fitTables() {
+  const f = document.querySelector(".filters");
+  document.documentElement.style.setProperty("--filters-h", (f ? f.offsetHeight : 0) + "px");
+  for (const w of document.querySelectorAll(".tbl-wrap")) {
+    if (w.closest("details.tv")) continue;
+    const t = w.querySelector("table"); if (!t) continue;
+    w.classList.remove("xscroll");
+    if (t.scrollWidth > w.clientWidth + 1) w.classList.add("xscroll");
+  }
+}
+let rz; new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => { charts.forEach(c => c.draw()); fitTables(); }); }).observe(document.querySelector(".page"));
 
 // ---------- tiles ----------
 function tile(label, value, sub) { return el("div", {class:"tile"}, el("div", {class:"tile-lbl", text:label}), el("div", {class:"tile-val", text:value}), sub ? el("div", {class:"tile-sub", text:sub}) : null); }
@@ -812,7 +859,7 @@ function renderRankings() {
   const seg = el("div", {class:"seg", role:"group", "aria-label":"Tipo de ranking"},
     ...[["vol", "Volumen"], ["eff", "Eficiencia (EPA)"]].filter(([v]) => v === "vol" || EF.length).map(([v, lbl]) => {
       const b = el("button", {type:"button", "aria-pressed": String(rkView === v), text: lbl});
-      b.addEventListener("click", () => { rkView = v; rkSort = v === "eff" ? "epa" : "tot"; renderRankings(); }); return b; }));
+      b.addEventListener("click", () => { rkView = v; rkSort = v === "eff" ? "epa" : "tot"; renderRankings(); fitTables(); }); return b; }));
   host.append(el("div", {class:"panel-head"}, el("h3", {text: "Ofensivas y defensivas " + seasonLabel(state.season)}), seg,
     el("span", {class:"sec-note", text: `${state.phase === "REG" ? "Temporada regular" : "Incluye playoffs"}. #1 es la ofensiva que más produce o la defensiva que menos permite. ` +
       (eff ? "EPA: puntos esperados que suma cada jugada (pases incluyen sacks y scrambles). Éxito: jugadas con EPA positivo. Zona roja: drives que llegan a la 20 rival y terminan en TD." : "Promedios por partido; yardas por aire netas de sacks.") +
@@ -824,7 +871,7 @@ function renderRankings() {
     : [["pts","Puntos"], ["tot","Yds totales"], ["py","Aire"], ["ry","Tierra"], ["apts","Puntos"], ["atot","Yds totales"], ["apy","Aire"], ["ary","Tierra"]];
   const half = cols.length / 2;
   const th = ([k, lbl]) => { const b = el("button", {type:"button", class:"sort" + (rkSort === k ? " on" : ""), "aria-pressed": String(rkSort === k), text: lbl});
-    b.addEventListener("click", () => { rkSort = k; renderRankings(); }); return el("th", {}, b); };
+    b.addEventListener("click", () => { rkSort = k; renderRankings(); fitTables(); }); return el("th", {}, b); };
   const tbl = el("table", {class:"st rk-t" + (eff ? " eff" : "")});
   tbl.append(el("thead", {},
     el("tr", {}, el("th", {}), el("th", {}), el("th", {colspan: String(half), class:"grp", text:"Ofensiva"}), el("th", {colspan: String(half), class:"grp", text:"Defensiva (permitido)"})),
@@ -1544,6 +1591,8 @@ function render() {
   renderGameLines();
   if (TS.length) { renderRankings(); renderTeamRank(); }
   if (PD) { renderTeamPlayers(); renderDefense(); renderPlayers(); }
+  filtersSummary();
+  fitTables();
 }
 $("f-season").append(el("option", {value:HIST, text: "Histórico"}));
 for (const s of [...seasons].reverse()) $("f-season").append(el("option", {value:s, text: seasonLabel(s)}));
@@ -1560,6 +1609,9 @@ document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click"
 if (PD) $("pl-list").append(...[...players].sort((a, b) => b.last.localeCompare(a.last) || a.nm.localeCompare(b.nm)).map(p => el("option", {value: playerLabel(p)})));
 else { $("players").hidden = true; $("tm-players-grid").hidden = true; }
 if (!TS.length) { $("rk").hidden = true; $("tm-rank").hidden = true; }
+$("filters-open").addEventListener("click", () => setFiltersOpen(true));
+$("filters-close").addEventListener("click", () => setFiltersOpen(false));
+{ const pref = store.get("filters"); if (pref === "closed" || (!pref && matchMedia("(max-width: 700px)").matches)) setFiltersOpen(false, false); }
 const lp = new Date(lastPlayed + "T12:00:00");
 $("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
 render();
