@@ -194,6 +194,7 @@ details.bulk{margin-bottom:12px}
 .rk-t.eff td:nth-child(7),.rk-t.eff tr:last-child th:nth-child(7){border-left:0}
 .rk-t.eff td:nth-child(9),.rk-t.eff tr:last-child th:nth-child(9){border-left:1px solid var(--rule)}
 #rk .panel-head .seg{font-size:13px}
+#rk .panel-head .btn{padding:5px 12px;font-size:13px}
 .rk-t.eff td,.rk-t.eff th{padding-inline:5px}
 .rk-t.eff .tname{display:none}
 .badge.starter{background:var(--accent-wash);color:var(--accent)}
@@ -875,7 +876,13 @@ const rkCell = (v, rk, d=1) => el("td", {}, document.createTextNode(fmtNum(v, d)
 // abbreviation a franchise used in a given season (OAK before LV, etc.)
 const abbrIn = (t, s) => Object.keys(standMeta[s] || {}).find(x => fr(x) === t) || t;
 
-let rkSort = "tot", rkView = "vol";
+let rkSort = "tot", rkView = "vol", rkFocus = false;  // rkFocus: show only the selected team and its rival
+// rival for the focus filter: the histórico rival when one is chosen, else the next game's opponent
+function rkRival() {
+  if (isHist() && state.rival && state.rival !== state.team) return state.rival;
+  const g = nextGame[state.team];
+  return g ? fr(oppIn(g, state.team)) : "";
+}
 function renderRankings() {
   const host = $("rk"); host.replaceChildren();
   const R = teamRanks(g => inSeason(g) && inPhase(g));
@@ -884,7 +891,12 @@ function renderRankings() {
     ...[["vol", "Volumen"], ["eff", "Eficiencia (EPA)"]].filter(([v]) => v === "vol" || EF.length).map(([v, lbl]) => {
       const b = el("button", {type:"button", "aria-pressed": String(rkView === v), text: lbl});
       b.addEventListener("click", () => { rkView = v; rkSort = v === "eff" ? "epa" : "tot"; renderRankings(); fitTables(); }); return b; }));
-  host.append(el("div", {class:"panel-head"}, el("h3", {text: "Ofensivas y defensivas " + seasonLabel(state.season)}), seg,
+  const rival = rkRival(), pair = [state.team, rival].filter(Boolean);
+  const focusBtn = el("button", {type:"button", class:"btn" + (rkFocus ? "" : " ghost"), "aria-pressed": String(rkFocus),
+    title: rkFocus ? "Volver a mostrar los 32 equipos" : "Ocultar el resto de los equipos; los puestos siguen siendo de toda la liga",
+    text: rkFocus ? "Mostrar todos los equipos" : `Solo ${pair.join(" y ")}`});
+  focusBtn.addEventListener("click", () => { rkFocus = !rkFocus; renderRankings(); fitTables(); });
+  host.append(el("div", {class:"panel-head"}, el("h3", {text: "Ofensivas y defensivas " + seasonLabel(state.season)}), seg, focusBtn,
     el("span", {class:"sec-note", text: `${state.phase === "REG" ? "Temporada regular" : "Incluye playoffs"}. #1 es la ofensiva que más produce o la defensiva que menos permite. ` +
       (eff ? "EPA: puntos esperados que suma cada jugada (pases incluyen sacks y scrambles). Éxito: jugadas con EPA positivo. Zona roja: drives que llegan a la 20 rival y terminan en TD." : "Promedios por partido; yardas por aire netas de sacks.") +
       " Haz clic en un encabezado para ordenar."})));
@@ -900,13 +912,13 @@ function renderRankings() {
   tbl.append(el("thead", {},
     el("tr", {}, el("th", {}), el("th", {}), el("th", {colspan: String(half), class:"grp", text:"Ofensiva"}), el("th", {colspan: String(half), class:"grp", text:"Defensiva (permitido)"})),
     el("tr", {}, el("th", {text:"Equipo"}), el("th", {text:"PJ"}), ...cols.map(th))));
-  const teams = Object.keys(R.teams).filter(t => R.teams[t].n).sort((a, b) => (R.teams[a].rk[rkSort] ?? 99) - (R.teams[b].rk[rkSort] ?? 99));
+  const teams = Object.keys(R.teams).filter(t => R.teams[t].n && (!rkFocus || pair.includes(t))).sort((a, b) => (R.teams[a].rk[rkSort] ?? 99) - (R.teams[b].rk[rkSort] ?? 99));
   const tb = el("tbody");
   for (const t of teams) { const a = R.teams[t], shown = isHist() ? t : abbrIn(t, state.season);
     const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + name(shown)},
       el("td", {}, el("div", {class:"team-cell"}, teamMark(shown), el("span", {class:"abbr", text: shown}), el("span", {class:"tname", text: name(shown).split(" ").slice(-1)[0]}))),
       el("td", {text: a.n}), ...cols.map(([k]) => eff ? efCell(k, a) : rkCell(a.pg[k], a.rk[k])));
-    if (t === state.team) tr.classList.add("sel");
+    if (t === state.team) tr.classList.add("sel"); else if (t === rival) tr.classList.add("sel-r");
     const pick = () => { setState({team: t, ...(t === state.rival ? {rival: ""} : {})}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
     tr.addEventListener("click", pick);
     tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
