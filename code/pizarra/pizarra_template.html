@@ -148,6 +148,13 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 .team-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .team-head .big-sw{width:22px;height:22px;border-radius:4px;box-shadow:0 0 0 1px var(--rule);display:block}
 .tm-mark{display:inline-flex;align-items:center}
+.next-game{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.ng-teams{display:flex;align-items:center;gap:8px}
+.ng-at{font-family:var(--display);font-weight:700;color:var(--ink-3)}
+.ng-info{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 260px}
+.ng-eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.ng-title{font-family:var(--display);font-size:22px;font-weight:700}
+.ng-line{font-size:14px;color:var(--ink-2)}
 /* logos sit on a light disc so dark marks (Raiders, Ravens) stay visible in dark mode */
 .logo{flex:none;object-fit:contain;border-radius:50%;background:#fff;padding:1px;box-shadow:0 0 0 1px var(--rule)}
 .logo.big{padding:2px}
@@ -262,6 +269,7 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
 
   <section id="team">
     <div class="team-head"><span class="tm-mark" id="tm-sw"></span><h2 id="tm-title">Equipo</h2><span class="sec-note" id="tm-note"></span></div>
+    <div class="panel next-game" id="tm-next" hidden></div>
     <div class="tiles" id="tm-tiles"></div>
     <div class="team-grid">
       <div class="panel chart-card" id="c-team"></div>
@@ -296,7 +304,8 @@ const fr = t => FR[t] || t;
 const PLAYOFF = {WonSB:"Campeón", LostSB:"Perdió SB", LostCC:"Final conf.", LostDV:"Divisional", LostWC:"Comodín"};
 
 const games = D.g.map(a => ({season:a[0], type:a[1], week:a[2], date:a[3], away:a[4], as:a[5], home:a[6], hs:a[7], spread:a[8], total:a[9], neutral:a[10], ot:a[11],
-  roof:a[12] || "", temp:a[13], wind:a[14], ref:a[15] || "", arest:a[16], hrest:a[17], div:a[18]}));
+  roof:a[12] || "", temp:a[13], wind:a[14], ref:a[15] || "", arest:a[16], hrest:a[17], div:a[18],
+  time:a[19] || "", stadium:a[20] || "", surface:a[21] || ""}));
 const played = g => g.hs != null && g.as != null;
 const seasons = [...new Set(games.map(g => g.season))].sort((a,b) => a-b);
 const lastSeason = seasons[seasons.length-1];
@@ -1744,6 +1753,32 @@ function renderValidation() {
     el("p", {class:"chart-desc", text:"Cómo leerlo: los porcentajes absolutos quedan bajo 50% porque la línea sugerida redondea hacia arriba y muchos mercados tienen muchos ceros; lo que importa es la diferencia entre letras. La letra ayuda sobre todo en mercados de volumen del QB (completos, yardas de pase, intentos) y algo en recepciones y carrera; en TD casi no distingue. La parte de cobertura del modificador (CB, safeties y LB titulares, lesiones) no tiene histórico suficiente para validarla: tómala como contexto."}));
 }
 
+// ---------- next game of the selected team: opponent, date, kickoff and venue ----------
+const SURFACE_ES = {grass:"pasto natural", fieldturf:"pasto sintético (FieldTurf)", astroturf:"pasto sintético (AstroTurf)", sportturf:"pasto sintético (SportTurf)",
+  matrixturf:"pasto sintético (Matrix)", a_turf:"pasto sintético (A-Turf)", astroplay:"pasto sintético (AstroPlay)", dessograss:"pasto híbrido (Desso)"};
+const ROUND_ES = {WC:"Ronda de comodines", DIV:"Ronda divisional", CON:"Final de conferencia", SB:"Super Bowl"};
+function renderNextGame() {
+  const host = $("tm-next"), T = state.team, g = nextGame[T];
+  host.replaceChildren(); host.hidden = !g;
+  if (!g) return;
+  const home = fr(g.home) === T, opp = home ? g.away : g.home, oppT = fr(opp);
+  const where = g.neutral ? "Campo neutral" : home ? `Local · en casa de ${name(T)}` : `Visitante · en casa de ${name(opp)}`;
+  const day = new Date(g.date + "T12:00:00").toLocaleDateString("es", {weekday:"long", day:"numeric", month:"long", year:"numeric"});
+  const kick = g.time ? ` · ${g.time} h (hora del Este de EE. UU.)` : "";
+  const venue = [g.stadium, ROOF_ES[g.roof], SURFACE_ES[g.surface] || g.surface].filter(Boolean).join(" · ");
+  const tl = g.spread == null ? null : home ? -g.spread : g.spread;
+  const line = g.spread == null ? "Línea todavía no publicada" : `Línea: ${T} ${lineTxt(tl)}` + (g.total != null ? ` · Total ${String(g.total).replace(".", ",")}` : "");
+  const rest = home ? [g.hrest, g.arest] : [g.arest, g.hrest];
+  host.append(
+    el("div", {class:"ng-teams"}, teamMark(T, true), el("span", {class:"ng-at", text: g.neutral ? "vs" : home ? "vs" : "@"}), teamMark(opp, true)),
+    el("div", {class:"ng-info"},
+      el("div", {class:"ng-eyebrow", text: "Próximo partido · " + (g.type === "REG" ? `Semana ${g.week}` : ROUND_ES[g.type] || g.type) + (g.div ? " · divisional" : "")}),
+      el("div", {class:"ng-title", text: `${home || g.neutral ? "vs" : "@"} ${name(opp)}`}),
+      el("div", {class:"ng-line", text: day.charAt(0).toUpperCase() + day.slice(1) + kick}),
+      el("div", {class:"ng-line", text: [where, venue].filter(Boolean).join(" — ")}),
+      el("div", {class:"ng-line muted", text: line + (rest[0] != null && rest[1] != null ? ` · Descanso: ${T} ${rest[0]} días, ${oppT} ${rest[1]}` : "")})));
+}
+
 // ---------- controls ----------
 const TRANSIENT = ["pline", "gspread", "gtotal", "ghome", "gwind", "gtemp", "gref"];
 function setState(p) {
@@ -1758,7 +1793,7 @@ function render() {
   teamList.filter(t => t !== state.team).forEach(t => rv.append(el("option", {value:t, text: name(t)})));
   $("f-season").value = state.season; $("f-team").value = state.team; rv.value = state.rival; $("f-window").value = state.window;
   document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === state.phase));
-  renderStandings(); renderBetting(); renderTeam();
+  renderStandings(); renderBetting(); renderTeam(); renderNextGame();
   renderGameLines();
   if (TS.length) { renderRankings(); renderTeamRank(); }
   if (PD) { renderTeamPlayers(); renderDefense(); renderPlayers(); }
