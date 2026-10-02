@@ -68,6 +68,7 @@ def schedule_rows(remote):
 
 def build_data(remote=True):
     game_rows = [r for r in schedule_rows(remote) if int(r["season"]) >= FIRST_SEASON]
+    last_season = max(r["season"] for r in game_rows)
     games = [
         [
             int(r["season"]), r["game_type"], int(r["week"]), r["gameday"],
@@ -77,6 +78,8 @@ def build_data(remote=True):
             # game context: stadium roof, weather (°F, mph), referee, days of rest, divisional
             r["roof"], num(r["temp"]), num(r["wind"]), r["referee"],
             num(r["away_rest"]), num(r["home_rest"]), int(r["div_game"] or 0),
+            # kickoff (Eastern time) and venue for the next-game card: only the latest season needs them
+            *((r["gametime"], r["stadium"], r["surface"]) if r["season"] == last_season else ()),
         ]
         for r in game_rows
     ]
