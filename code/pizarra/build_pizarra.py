@@ -423,6 +423,37 @@ def build_matchup_validation(games, pdata):
     return {"res": res, "mod": mods, "from": PLAYER_FIRST_SEASON, "to": last, "window": MATCH_WINDOW}
 
 
+def build_logos():
+    """Team logos embedded as data URIs (the published page can't load images from other
+    sites). URLs come from nflverse's teams table; ESPN serves them resized to 64x64.
+    Teams whose logo can't be fetched keep the team-color swatch in the page."""
+    try:
+        import base64
+        import nflreadpy as nfl
+        import requests
+        teams = nfl.load_teams()
+    except Exception as e:
+        print(f"No team logos: {e}")
+        return None
+    out = {}
+    for abbr, url in teams.select(["team_abbr", "team_logo_espn"]).iter_rows():
+        if not url or abbr in out:
+            continue
+        # ESPN's image combiner returns the same logo already resized (a few KB instead of ~40)
+        src = f"https://a.espncdn.com/combiner/i?img={url.split('espncdn.com', 1)[1]}&h=64&w=64" if "espncdn.com" in url else url
+        try:
+            r = requests.get(src, timeout=20)
+            r.raise_for_status()
+            ctype = r.headers.get("content-type", "").split(";")[0]
+            if not ctype.startswith("image/"):
+                raise ValueError(f"not an image ({ctype})")
+            out[abbr] = f"data:{ctype};base64,{base64.b64encode(r.content).decode()}"
+        except Exception as e:
+            print(f"No logo for {abbr}: {e}")
+    print(f"Logos: {len(out)} teams, {sum(len(v) for v in out.values()) // 1024} KB")
+    return out or None
+
+
 # defensive depth-chart slots shown in the "Cobertura rival" block
 DEF_SLOTS = ["LCB", "RCB", "NB", "FS", "SS", "MLB", "WLB", "SLB", "LILB", "RILB"]
 
@@ -517,6 +548,7 @@ def main():
     data["t"] = None if args.no_players else build_team_stats(game_index)
     data["e"] = None if args.no_players else build_efficiency(game_index)
     data["cov"] = None if args.no_players else build_coverage(game_index)
+    data["logo"] = None if args.no_players else build_logos()
     data["mv"] = build_matchup_validation(data["g"], data["p"]) if data["p"] else None
     template = (HERE / "pizarra_template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")

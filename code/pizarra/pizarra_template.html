@@ -146,7 +146,11 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 
 /* team */
 .team-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.team-head .big-sw{width:22px;height:22px;border-radius:4px;box-shadow:0 0 0 1px var(--rule)}
+.team-head .big-sw{width:22px;height:22px;border-radius:4px;box-shadow:0 0 0 1px var(--rule);display:block}
+.tm-mark{display:inline-flex;align-items:center}
+/* logos sit on a light disc so dark marks (Raiders, Ravens) stay visible in dark mode */
+.logo{flex:none;object-fit:contain;border-radius:50%;background:#fff;padding:1px;box-shadow:0 0 0 1px var(--rule)}
+.logo.big{padding:2px}
 .team-head h2{font-size:30px}
 .team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:16px;align-items:start}
 .pill{display:inline-block;font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;min-width:2.6em;text-align:center}
@@ -257,7 +261,7 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
   </section>
 
   <section id="team">
-    <div class="team-head"><span class="big-sw" id="tm-sw"></span><h2 id="tm-title">Equipo</h2><span class="sec-note" id="tm-note"></span></div>
+    <div class="team-head"><span class="tm-mark" id="tm-sw"></span><h2 id="tm-title">Equipo</h2><span class="sec-note" id="tm-note"></span></div>
     <div class="tiles" id="tm-tiles"></div>
     <div class="team-grid">
       <div class="panel chart-card" id="c-team"></div>
@@ -351,6 +355,13 @@ const signed = (v, d=1) => v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "�
 const lineTxt = v => v == null ? "—" : v === 0 ? "PK" : (v > 0 ? "+" : "−") + String(Math.abs(v)).replace(".", ",");
 const name = t => D.n[t] || t;
 const color = t => D.c[t] || "#888";
+// team mark: the embedded logo (historic one first, e.g. OAK), else the team-color swatch
+const LOGO = D.logo || {};
+function teamMark(t, big) {
+  const src = LOGO[t] || LOGO[fr(t)], size = big ? 30 : 18;
+  return src ? el("img", {class: "logo" + (big ? " big" : ""), src, alt: "", width: size, height: size, loading: "lazy", decoding: "async"})
+    : el("span", {class: big ? "big-sw" : "sw", style: `background:${color(t)}`});
+}
 const inPhase = g => state.phase === "ALL" || g.type === "REG";
 const seasonLabel = s => s === HIST ? `Histórico ${span(histSeasons())}` : s + (s === lastSeason && !lastSeasonDone ? " (en curso)" : "");
 
@@ -618,7 +629,7 @@ function renderStandings() {
       tbl.append(el("thead", {}, el("tr", {}, ...["Equipo","G-P-E","PF","PC","Dif","ATS","O-U"].map(h => el("th", {text:h})))));
       const tb = el("tbody");
       for (const {t, m, r} of rows) {
-        const cell = el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(t)}`}), el("span", {class:"abbr", text:t}), el("span", {class:"tname", text: name(t).split(" ").slice(-1)[0]}));
+        const cell = el("div", {class:"team-cell"}, teamMark(t), el("span", {class:"abbr", text:t}), el("span", {class:"tname", text: name(t).split(" ").slice(-1)[0]}));
         if (hist) {
           if (m.apps) cell.append(el("span", {class:"badge", title:"Temporadas con playoffs", text: m.apps + " PO"}));
           if (m.titles) cell.append(el("span", {class:"badge champ", title:"Super Bowls ganados", text: m.titles + (m.titles > 1 ? " títulos" : " título")}));
@@ -702,7 +713,7 @@ function renderTeam() {
     && (!R || fr(g.home) === R || fr(g.away) === R)).sort((a,b) => a.date.localeCompare(b.date));
   const abbrThen = hist || !list.length ? T : (fr(list[0].home) === T ? list[0].home : list[0].away);
   const metaOf = s0 => Object.entries(standMeta[s0] || {}).find(([t]) => fr(t) === T)?.[1];
-  $("tm-sw").style.background = color(abbrThen);
+  $("tm-sw").replaceChildren(teamMark(abbrThen, true));
   $("tm-title").textContent = name(abbrThen) + (R ? " vs " + name(R) : "");
   if (R) {
     const done = list.filter(played), last = done[done.length-1];
@@ -884,7 +895,7 @@ function renderRankings() {
   const tb = el("tbody");
   for (const t of teams) { const a = R.teams[t], shown = isHist() ? t : abbrIn(t, state.season);
     const tr = el("tr", {tabindex:"0", "aria-label": "Ver " + name(shown)},
-      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(shown)}`}), el("span", {class:"abbr", text: shown}), el("span", {class:"tname", text: name(shown).split(" ").slice(-1)[0]}))),
+      el("td", {}, el("div", {class:"team-cell"}, teamMark(shown), el("span", {class:"abbr", text: shown}), el("span", {class:"tname", text: name(shown).split(" ").slice(-1)[0]}))),
       el("td", {text: a.n}), ...cols.map(([k]) => eff ? efCell(k, a) : rkCell(a.pg[k], a.rk[k])));
     if (t === state.team) tr.classList.add("sel");
     const pick = () => { setState({team: t, ...(t === state.rival ? {rival: ""} : {})}); $("team").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
@@ -1164,7 +1175,7 @@ function renderProps() {
     const del = el("button", {type:"button", class:"del", "aria-label": `Quitar ${p.nm} ${MK[x.m].name}`, text:"×"});
     del.addEventListener("click", e => { e.stopPropagation(); const cur = [...currentProps()]; cur.splice(k, 1); setProps(cur); });
     const tr = el("tr", {tabindex:"0", "aria-label": `Ver ${p.nm}`},
-      el("td", {}, el("div", {class:"team-cell"}, el("span", {class:"sw", style:`background:${color(p.team)}`}), el("b", {text: p.nm}), el("span", {class:"muted", text: `${p.pos} · ${p.team}`}), depthTag(p), injTag(p))),
+      el("td", {}, el("div", {class:"team-cell"}, teamMark(p.team), el("b", {text: p.nm}), el("span", {class:"muted", text: `${p.pos} · ${p.team}`}), depthTag(p), injTag(p))),
       el("td", {text: MK[x.m].name}), el("td", {text: String(x.line).replace(".", ",")}), el("td", {}, nextOppCell(p)), el("td", {}, matchupPill(p, x.m)),
       el("td", {text: fmtNum(w[1][1].avg)}), expCell(pRows(p).slice(-10), x.m), hcell(w[0][1]), hcell(w[1][1]), hcell(w[2][1]), hcell(w[3][1]), el("td", {}, trendPill(w[1][1])), el("td", {}, del));
     if (state.player === p.id && state.pmarket === x.m) tr.classList.add("sel");
