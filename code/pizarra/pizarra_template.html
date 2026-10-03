@@ -244,6 +244,10 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
 .tabs button{white-space:nowrap}
 @media (max-width:520px){.tabs button{font-size:16px;padding:8px 9px}}
 .top-t td{vertical-align:top}
+.vac-note{font-size:12px;color:var(--good);white-space:normal;max-width:34ch}
+.top-t td div.muted{white-space:normal;max-width:24ch;margin-left:auto}
+.top-t td:first-child div.muted,.top-t td:nth-child(2) div.muted{margin-left:0}
+#view-top .team-grid{grid-template-columns:1fr}
 #view-top .panel{display:flex;flex-direction:column;gap:12px;min-width:0}
 @media (max-width:520px){
   .top-t thead{display:none}
@@ -1088,14 +1092,14 @@ const INJ_ES = {Knee:"Rodilla", Ankle:"Tobillo", Hamstring:"Isquiotibial", Groin
   Concussion:"Conmoción", Back:"Espalda", Hip:"Cadera", Calf:"Pantorrilla", Quadricep:"Cuádriceps", Wrist:"Muñeca", Hand:"Mano",
   Illness:"Enfermedad", Chest:"Pecho", Ribs:"Costillas", Elbow:"Codo", Neck:"Cuello", Thumb:"Pulgar", Finger:"Dedo", Achilles:"Aquiles",
   Abdomen:"Abdomen", Oblique:"Oblicuo", Heel:"Talón", Shin:"Espinilla", Pectoral:"Pectoral", "Not injury related":"Sin lesión"};
-const INJ_STATUS = {Out:"Fuera", Doubtful:"Dudoso", Questionable:"Cuestionable"};
+const INJ_STATUS = {Out:"Fuera", Doubtful:"Dudoso", Questionable:"Cuestionable", IR:"Lista de lesionados", PUP:"PUP", NA:"No disponible", Sus:"Suspendido", COV:"Fuera"};
 function injTag(p) {
   const x = PD && PD.inj[p.i]; if (!x) return null;
-  const [st, part, prac, wk] = x;
+  const [st, part, prac, wk, src] = x;
   const label = INJ_STATUS[st] || (prac && /Did Not/.test(prac) ? "No entrenó" : "Entrenó limitado");
   const body = part ? (INJ_ES[part] || part) : "";
-  return el("span", {class: "inj " + (st === "Out" || st === "Doubtful" ? "out" : "q"),
-    title: `Reporte de lesiones, semana ${wk}` + (prac ? ` · práctica: ${prac}` : ""), text: label + (body ? " · " + body : "")});
+  return el("span", {class: "inj " + (st && st !== "Questionable" ? "out" : "q"),
+    title: (src === "sleeper" ? `Sleeper, actualizado ${wk || ""}` : `Reporte de lesiones, semana ${wk}`) + (prac ? ` · práctica: ${prac}` : ""), text: label + (body ? " · " + body : "")});
 }
 // place on the team's latest depth chart, e.g. "WR1"
 function depthTag(p) {
@@ -2282,14 +2286,31 @@ function propProb(p, mk, line) {
   const mu = matchupFor(p, mk), tl = ng.spread == null ? null : fr(ng.home) === fr(p.team) ? -ng.spread : ng.spread;
   const implied = tl == null || ng.total == null ? null : ng.total / 2 - tl / 2;
   const o10 = v10.filter(v => v > line).length, o20 = v20.filter(v => v > line).length;
-  const x = [1, logit(o10, v10.length), logit(o20, v20.length), mu && mu.grade === "A" ? 1 : 0, mu && mu.grade === "C" ? 1 : 0, implied == null ? 0 : (implied - 22) / 5];
+  const ctx = PM.ctx && PM.ctx[p.i], inj = injuryFeatures(mk, p.pos, ctx);
+  const x = [1, logit(o10, v10.length), logit(o20, v20.length), mu && mu.grade === "A" ? 1 : 0, mu && mu.grade === "C" ? 1 : 0, implied == null ? 0 : (implied - 22) / 5, ...inj];
   const z = x.reduce((s, v, i) => s + v * PM.coef[PM.fam[mk]][i], 0);
-  return {pOver: 1 / (1 + Math.exp(-z)), o10, n10: v10.length, o20, n20: v20.length, mu, implied, ng};
+  return {pOver: 1 / (1 + Math.exp(-z)), o10, n10: v10.length, o20, n20: v20.length, mu, implied, ng, ctx, vac: inj[0]};
+}
+// injury report: who won't play (latest weekly report, overridden by Sleeper's fresher status)
+const OUT_ST = new Set(["Out", "Doubtful", "IR", "PUP", "NA", "Sus", "COV"]);
+const isOut = p => { const x = PD && PD.inj[p.i]; return !!x && OUT_ST.has(x[0]); };
+// [vacated share for this market, main QB out, player questionable], as in the build's model
+function injuryFeatures(mk, pos, ctx) {
+  if (!ctx) return [0, 0, 0];
+  const [vt, vc, qbOut, ownQ] = ctx, fam = PM.fam[mk];
+  const vac = mk === "rushing_yards" || mk === "carries" || (mk === "rush_rec" && pos === "RB") ? vc : fam === "t" ? vt + vc : vt;
+  return [vac, pos === "QB" ? 0 : qbOut, ownQ];
+}
+function vacNote(c) {
+  const ctx = c.ctx; if (!ctx || !(c.vac > 0.03 || (ctx[2] && c.p.pos !== "QB"))) return null;
+  const names = ctx[4].map(([k, st, sc]) => `${players[k] ? players[k].nm : "?"}${st >= sc ? ` (${fmtPct(st).replace(/,\d%$/, "%")} de los envíos)` : ` (${fmtPct(sc).replace(/,\d%$/, "%")} de los acarreos)`}`);
+  return el("div", {class:"vac-note", title:"Compañeros que no juegan según el reporte de lesiones; su volumen se reparte entre el resto del equipo. El modelo lo toma en cuenta.",
+    text: (c.vac > 0.03 ? `Volumen libre: ${fmtPct(c.vac).replace(/,\d%$/, "%")} · ` : "") + "fuera: " + names.join(", ")});
 }
 function propCandidates() {
   const out = [];
   for (const x of currentProps()) {
-    const p = playerById[x.id]; if (!p) continue;
+    const p = playerById[x.id]; if (!p || isOut(p)) continue;
     const r = propProb(p, x.m, x.line); if (!r) continue;
     const over = r.pOver >= 0.5;
     out.push({p, mk: x.m, line: x.line, pick: over ? "over" : "under", prob: over ? r.pOver : 1 - r.pOver, ...r});
@@ -2313,7 +2334,7 @@ function oddsCandidates() {
   if (!ODDS || !PM) return [];
   const out = [];
   for (const [gi, pi, mk, line, op, ob, up, ub, nb] of ODDS.p) {
-    const g = games[gi], p = players[pi]; if (!g || played(g) || !p || !MK[mk]) continue;
+    const g = games[gi], p = players[pi]; if (!g || played(g) || !p || !MK[mk] || isOut(p)) continue;
     const r = propProb(p, mk, line); if (!r || r.ng !== g || r.n10 < MIN_GAMES) continue;
     const mOver = marketOver(op, up), pOver = MODEL_W * r.pOver + (1 - MODEL_W) * mOver, sides = [];
     if (op != null) sides.push({pick: "over", prob: pOver, model: r.pOver, market: mOver, price: op, book: ODDS.books[ob]});
@@ -2384,7 +2405,8 @@ function renderTop() {
       const t = el("table", {class:"splits top-t"});
       t.append(el("thead", {}, el("tr", {}, ...["Jugador", "Apuesta", "Momio", "Últ. 10", "Últ. 20", "Matchup", "Prob.", "Ventaja", "", ""].map(h => el("th", {text: h})))),
         el("tbody", {}, ...ptop.map(c => el("tr", {},
-          el("td", {}, el("b", {text: c.p.nm}), el("div", {class:"muted", text: `${c.p.pos} · ${c.p.team} ${fr(c.ng.home) === fr(c.p.team) ? "vs" : "@"} ${oppIn(c.ng, fr(c.p.team))}`})),
+          el("td", {}, el("b", {text: c.p.nm}), el("div", {class:"muted", text: `${c.p.pos} · ${c.p.team} ${fr(c.ng.home) === fr(c.p.team) ? "vs" : "@"} ${oppIn(c.ng, fr(c.p.team))}`}),
+            injTag(c.p), vacNote(c)),
           el("td", {}, el("b", {text: `${c.pick === "over" ? "Over" : "Under"} ${String(c.line).replace(".", ",")}`}), el("div", {class:"muted", text: MK[c.mk].name})),
           el("td", {}, document.createTextNode(oddsTxt(c.price)), el("div", {class:"muted", text: c.book ? c.book + (c.nb > 1 ? ` · ${c.nb} casas` : "") : "supuesto"})),
           el("td", {text: `${c.pick === "over" ? c.o10 : c.n10 - c.o10}/${c.n10}`}), el("td", {text: `${c.pick === "over" ? c.o20 : c.n20 - c.o20}/${c.n20}`}),
@@ -2402,6 +2424,15 @@ function renderTop() {
         el("td", {text: avg == null ? "—" : fmtPct(avg)}), el("td", {text: n ? fmtPct(hit / n) : "—"}), el("td", {text: n})))));
     ps.append(el("div", {class:"team-grid"}, el("div", {class:"tbl-wrap"}, cal),
       el("p", {class:"chart-desc", text:"La prueba usa líneas tomadas del propio historial del jugador (no hay líneas históricas de casas en los datos), y ahí la probabilidad se cumple. Con líneas reales, que ya incorporan lesiones, clima y noticias, la ventaja suele ser menor: toma la probabilidad como techo y prefiere picks que también tengan buena letra de matchup. Para props automáticas con líneas reales hace falta conectar una API de momios."})));
+    if (PM.vac) {
+      const vt = el("table", {class:"splits"}), lbl = ["Nadie relevante", "Menos de 15%", "15–30%", "30% o más"];
+      vt.append(el("caption", {text:`Compañeros fuera: volumen que dejan libre (prueba ${PM.test.join("–")})`}),
+        el("thead", {}, el("tr", {}, ...["Envíos o acarreos libres", "Over real", "Modelo sin lesiones", "Modelo con lesiones", "Líneas"].map(h => el("th", {text: h})))),
+        el("tbody", {}, ...PM.vac.map(([n, o, w, wo], i) => el("tr", {}, el("td", {text: lbl[i] || fmtPct(PM.vacB[i]) + "+"}),
+          el("td", {text: n ? fmtPct(o / n) : "—"}), el("td", {text: wo == null ? "—" : fmtPct(wo)}), el("td", {text: w == null ? "—" : fmtPct(w)}), el("td", {text: n})))));
+      ps.append(el("div", {class:"team-grid"}, el("div", {class:"tbl-wrap"}, vt),
+        el("p", {class:"chart-desc", text:"Cuando un compañero regular (3+ de los últimos 5 partidos) está fuera según el reporte de lesiones, su parte de los envíos o acarreos del equipo queda libre y el resto la absorbe. Sin tomarlo en cuenta el modelo subestimaba el over justo en esos partidos; ahora lo incluye, junto con un ajuste si el jugador está como cuestionable o si falta el QB titular. Los jugadores fuera, dudosos o en la lista de lesionados no aparecen en el Top 5. Estados: reporte oficial de nflverse, actualizado con Sleeper (cambios de último momento, IR y PUP)."})));
+    }
   }
   host.append(gs, ps);
   fitTables();
