@@ -24,6 +24,7 @@ import argparse
 import bisect
 import csv
 import json
+import math
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -341,12 +342,14 @@ def grade_of(rank, n):
     return "A" if r >= 21 else "B" if r >= 11 else "C"
 
 
-def build_matchup_validation(games, pdata, zones=None):
+def build_matchup_validation(games, pdata, hooks=()):
     """Backtest of the matchup grade. For every player-game since 2021 the opponent is graded
     with only its previous MATCH_WINDOW games (no look-ahead), the line is the dashboard's
     suggested line (median of the player's previous 10 games, rounded to .5; 0.5 for TDs), and
     we count how often the player went over, by grade, by market and by implied-total modifier.
-    `zones` (a PlayDetail) also records each graded player-game for its zone-fit backtest."""
+    Each of `hooks` (PlayDetail, PropModel) also records every graded player-game and market
+    with record(player, previous rows, row, market, grade, value, line, implied total) and
+    adds its summary() to the result under its `key`."""
     rows, pos_of = pdata["r"], [p[2] for p in pdata["pl"]]
     n_stats = len(STAT_COLS)
     stat = lambda r: dict(zip(STAT_COLS, r[4:4 + n_stats]))
@@ -415,8 +418,8 @@ def build_matchup_validation(games, pdata, zones=None):
                 med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
                 line = 0.5 if m == "anytime_td" else int(med) + 0.5
                 v = f(s)
-                if zones:
-                    zones.record(pi, prs[max(0, i - 10):i], r, m, grade, v > line)
+                for h in hooks:
+                    h.record(pi, prs[:i], r, m, grade, v, line, implied)
                 for key in (m, "all"):
                     c = res.setdefault(key, {}).setdefault(grade, [0, 0, 0.0])
                     c[0] += 1
@@ -432,8 +435,8 @@ def build_matchup_validation(games, pdata, zones=None):
     last = max(games[r[1]][0] for r in rows)
     print(f"Matchup validation: {res.get('all')}, modifier {mods}")
     out = {"res": res, "mod": mods, "from": PLAYER_FIRST_SEASON, "to": last, "window": MATCH_WINDOW}
-    if zones:
-        out["zone"] = zones.summary()
+    for h in hooks:
+        out[h.key] = h.summary()
     return out
 
 
@@ -700,11 +703,14 @@ class PlayDetail:
         allowed = self._sum([self.allowed.get((gi, defense, key)) for gi in prev], size)
         return zone_fit(use, allowed, self.league[key], kind)
 
-    def record(self, pi, prior, r, market, grade, over):
+    key = "zone"
+
+    def record(self, pi, prior, r, market, grade, value, line, implied):
         kind = zone_kind(market, self.pos[pi])
         if not kind:
             return
-        f = self.fit_before(pi, [x[1] for x in prior], r[3], self.games[r[1]][3], kind)
+        f = self.fit_before(pi, [x[1] for x in prior[-MATCH_WINDOW:]], r[3], self.games[r[1]][3], kind)
+        over = value > line
         if f is None:
             return
         tier = "-" if f <= ZONE_TIERS[0] else "+" if f >= ZONE_TIERS[1] else "0"
@@ -771,6 +777,211 @@ class PlayDetail:
                 "k": ZONE_K, "rt": {"s": seasons, "names": names, "pl": rp, "lg": rl}}
 
 
+# ---------- "Top de la semana": game model and prop probabilities ----------
+BREAK_EVEN = 0.524  # win rate needed at -110
+FRANCHISE = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
+
+
+def _solve(A, b):
+    """Solves A x = b (small dense system) by Gauss-Jordan elimination with partial pivoting."""
+    k = len(b)
+    M = [list(map(float, A[i])) + [float(b[i])] for i in range(k)]
+    for c in range(k):
+        p = max(range(c, k), key=lambda r: abs(M[r][c]))
+        M[c], M[p] = M[p], M[c]
+        for r in range(k):
+            if r != c and M[r][c]:
+                f = M[r][c] / M[c][c]
+                for j in range(c, k + 1):
+                    M[r][j] -= f * M[c][j]
+    return [M[i][k] / M[i][i] for i in range(k)]
+
+
+def _ols(X, y):
+    k = len(X[0])
+    A, b = [[0.0] * k for _ in range(k)], [0.0] * k
+    for xi, yi in zip(X, y):
+        for a in range(k):
+            b[a] += xi[a] * yi
+            for c in range(k):
+                A[a][c] += xi[a] * xi[c]
+    return _solve(A, b)
+
+
+def _logistic(X, y, iters=8, l2=1.0):
+    """Logistic regression by Newton's method with a small ridge penalty."""
+    k = len(X[0])
+    w = [0.0] * k
+    for _ in range(iters):
+        g, H = [-l2 * v for v in w], [[l2 if a == c else 0.0 for c in range(k)] for a in range(k)]
+        for xi, yi in zip(X, y):
+            p = 1 / (1 + math.exp(-sum(a * c for a, c in zip(xi, w))))
+            q = p * (1 - p)
+            for a in range(k):
+                g[a] += (yi - p) * xi[a]
+                qa = q * xi[a]
+                for c in range(a, k):
+                    H[a][c] += qa * xi[c]
+        for a in range(k):
+            for c in range(a):
+                H[a][c] = H[c][a]
+        w = [wi + d for wi, d in zip(w, _solve(H, g))]
+    return w
+
+
+GM_WINDOW = 10           # each team's previous games behind its rating
+GM_FIRST_TEST = 2012     # first season of the walk-forward backtest
+GM_BUCKETS = [0, 1.5, 3, 5]  # |model - market| in points: lower bound of each backtest bucket
+
+
+def build_game_picks(games, eff):
+    """Point-spread and total model for the next week's games, and its walk-forward backtest.
+    A team's rating is its net EPA per play (offense minus defense) and its points for and
+    against per game over its previous GM_WINDOW games. The home margin is fit by least
+    squares on the rating gap, the points gap and home field; the total on both teams' EPA,
+    points and plays and a dome flag. Each season since GM_FIRST_TEST is predicted with a
+    model fit only on earlier seasons; the cover rate by size of the gap with the market's
+    line is the probability the page shows for a pick."""
+    fr = lambda t: FRANCHISE.get(t, t)
+    by_game = {(r[0], fr(r[1])): r for r in eff}
+    hist = {}
+
+    def rating(t):
+        h = hist.get(t, [])[-GM_WINDOW:]
+        if len(h) < 4:
+            return None
+        tot = [sum(x[j] for x in h) for j in range(6)]
+        n = len(h)
+        return {"net": tot[0] / tot[1] - tot[2] / tot[3], "oe": tot[0] / tot[1], "de": tot[2] / tot[3],
+                "pf": tot[4] / n, "pa": tot[5] / n, "pl": (tot[1] + tot[3]) / n}
+
+    def features(g):
+        a, h = rating(fr(g[4])), rating(fr(g[6]))
+        if not a or not h:
+            return None
+        return {"sp": [1, h["net"] - a["net"], (h["pf"] - h["pa"]) - (a["pf"] - a["pa"]), 0 if g[10] else 1],
+                "tot": [1, h["oe"] + h["de"] + a["oe"] + a["de"], h["pf"] + h["pa"] + a["pf"] + a["pa"], h["pl"] + a["pl"],
+                        1 if g[12] in ("dome", "closed") else 0],
+                "a": a, "h": h}
+
+    recs = []
+    for gi in sorted(range(len(games)), key=lambda gi: (games[gi][3], gi)):
+        g = games[gi]
+        if g[7] is None:
+            continue
+        f = features(g)
+        if f and g[8] is not None and g[9] is not None:
+            recs.append({"s": g[0], "f": f, "m": g[7] - g[5], "t": g[7] + g[5], "sp": g[8], "tot": g[9]})
+        ra, rh = by_game.get((gi, fr(g[4]))), by_game.get((gi, fr(g[6])))
+        if ra and rh:
+            for t, me, op, pf, pa in ((fr(g[4]), ra, rh, g[5], g[7]), (fr(g[6]), rh, ra, g[7], g[5])):
+                # offense EPA and plays, EPA and plays allowed, points for and against
+                hist.setdefault(t, []).append((me[3] + me[6], me[2] + me[5], op[3] + op[6], op[2] + op[5], pf, pa))
+    if not recs:
+        return None
+    seasons = sorted({r["s"] for r in recs})
+    bt = {"sp": [[0, 0] for _ in GM_BUCKETS], "tot": [[0, 0] for _ in GM_BUCKETS]}
+    bucket = lambda e: max(i for i, lo in enumerate(GM_BUCKETS) if abs(e) >= lo)
+    for s in (x for x in seasons if x >= GM_FIRST_TEST):
+        train, test = [r for r in recs if r["s"] < s], [r for r in recs if r["s"] == s]
+        for k, target, line in (("sp", "m", "sp"), ("tot", "t", "tot")):
+            w = _ols([r["f"][k] for r in train], [r[target] for r in train])
+            for r in test:
+                edge = sum(a * c for a, c in zip(r["f"][k], w)) - r[line]
+                act = r[target] - r[line]
+                if act and edge:
+                    c = bt[k][bucket(edge)]
+                    c[0] += 1
+                    c[1] += (edge > 0) == (act > 0)
+    w_sp = _ols([r["f"]["sp"] for r in recs], [r["m"] for r in recs])
+    w_tot = _ols([r["f"]["tot"] for r in recs], [r["t"] for r in recs])
+    # the next week with lines: the earliest week that still has unplayed games
+    todo = [gi for gi, g in enumerate(games) if g[7] is None and g[8] is not None and g[9] is not None]
+    picks = []
+    if todo:
+        first = games[min(todo, key=lambda gi: games[gi][3])]
+        week = [gi for gi in todo if games[gi][:3] == first[:3]]
+        for gi in sorted(week, key=lambda gi: games[gi][3]):
+            f = features(games[gi])
+            if not f:
+                continue
+            pm = sum(a * c for a, c in zip(f["sp"], w_sp))
+            pt = sum(a * c for a, c in zip(f["tot"], w_tot))
+            picks.append([gi, round(pm, 1), round(pt, 1)] +
+                         [round(f[t][k], 3 if k == "net" else 1) for t in ("h", "a") for k in ("net", "pf", "pa")])
+    print(f"Game model: backtest {GM_FIRST_TEST}-{seasons[-1]} spread {bt['sp']}, total {bt['tot']}; {len(picks)} upcoming games")
+    return {"window": GM_WINDOW, "from": GM_FIRST_TEST, "to": seasons[-1], "b": GM_BUCKETS, "bt": bt, "be": BREAK_EVEN, "g": picks}
+
+
+# prop probability: logistic model on the player's over rate at the line (last 10 and last 20
+# games), the matchup letter and the team's implied total, one model per family of market
+PROP_FAMILY = {"passing_yards": "y", "rushing_yards": "y", "receiving_yards": "y", "pass_rush": "y", "rush_rec": "y",
+               "completions": "c", "attempts": "c", "carries": "c", "receptions": "c",
+               "passing_tds": "t", "anytime_td": "t", "interceptions": "t"}
+PROP_CAL = [0.5, 0.55, 0.6, 0.65, 0.7]  # lower bounds of the calibration buckets (probability of the side picked)
+
+
+def prop_features(v10, v20, line, grade, implied):
+    """[1, logit over rate at the line in the last 10, same for the last 20, grade A, grade C,
+    (implied total - 22) / 5]; over rates use (overs + 1) / (games + 2)."""
+    lg = lambda o, n: math.log((o + 1) / (n - o + 1))
+    return [1.0, lg(sum(v > line for v in v10), len(v10)), lg(sum(v > line for v in v20), len(v20)),
+            1.0 if grade == "A" else 0.0, 1.0 if grade == "C" else 0.0, 0.0 if implied is None else (implied - 22) / 5]
+
+
+class PropModel:
+    """Fits P(over) for player props from every graded player-game since 2021. A player-game
+    has no sportsbook line in the data, so each one is scored at three lines taken from the
+    player's previous 10 games (20th, 50th and 80th percentile, rounded to .5; 0.5 and 1.5 for
+    touchdowns): the model learns how far a hit rate at a line carries forward. Calibration
+    is checked on the last two seasons with a model fit on the earlier ones."""
+    key = "pm"
+
+    def __init__(self, games):
+        self.games, self.rows, self.vals = games, [], {}
+
+    def _values(self, r, f, m):
+        k = (id(r), m)
+        if k not in self.vals:
+            self.vals[k] = f(dict(zip(STAT_COLS, r[4:4 + len(STAT_COLS)])))
+        return self.vals[k]
+
+    def record(self, pi, prior, r, market, grade, value, line, implied):
+        f = MARKETS[market][1]
+        v20 = [self._values(x, f, market) for x in prior[-20:]]
+        v10 = v20[-10:]
+        fam = PROP_FAMILY[market]
+        if fam == "t":
+            lines = (0.5, 1.5) if market == "passing_tds" else (0.5,)
+        else:
+            s = sorted(v10)
+            lines = sorted({int(s[int(q * (len(s) - 1))]) + 0.5 for q in (0.2, 0.5, 0.8)})
+        for ln in lines:
+            self.rows.append((fam, self.games[r[1]][0], prop_features(v10, v20, ln, grade, implied), value > ln))
+
+    def summary(self):
+        last = max(r[1] for r in self.rows)
+        test_seasons = [last - 1, last]
+        coef, cal = {}, [[0, 0.0, 0] for _ in PROP_CAL]
+        for fam in ("y", "c", "t"):
+            rows = [r for r in self.rows if r[0] == fam]
+            train = [r for r in rows if r[1] < test_seasons[0]]
+            w = _logistic([r[2] for r in train], [float(r[3]) for r in train])
+            for r in rows:
+                if r[1] >= test_seasons[0]:
+                    p = 1 / (1 + math.exp(-sum(a * c for a, c in zip(r[2], w))))
+                    conf = max(p, 1 - p)
+                    c = cal[max(i for i, lo in enumerate(PROP_CAL) if conf >= lo)]
+                    c[0] += 1
+                    c[1] += conf
+                    c[2] += (p >= 0.5) == r[3]
+            coef[fam] = [round(v, 4) for v in _logistic([r[2] for r in rows], [float(r[3]) for r in rows])]
+        cal = [[n, round(sp / n, 4) if n else None, h] for n, sp, h in cal]
+        print(f"Prop model: {len(self.rows)} scored lines, coefficients {coef}, calibration {test_seasons}: {cal}")
+        self.rows, self.vals = [], {}
+        return {"coef": coef, "fam": PROP_FAMILY, "cal": cal, "calB": PROP_CAL, "test": test_seasons, "be": BREAK_EVEN}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-o", "--output", type=Path, default=HERE / "pizarra-nfl.html")
@@ -789,7 +1000,9 @@ def main():
     data["e"] = None if args.no_players else build_efficiency(game_index, detail)
     data["cov"] = None if args.no_players else build_coverage(game_index)
     data["logo"] = None if args.no_players else build_logos()
-    data["mv"] = build_matchup_validation(data["g"], data["p"], detail) if data["p"] else None
+    hooks = [h for h in (detail, PropModel(data["g"]) if data["p"] else None) if h]
+    data["mv"] = build_matchup_validation(data["g"], data["p"], hooks) if data["p"] else None
+    data["gp"] = build_game_picks(data["g"], data["e"]) if data["e"] else None
     data["z"] = detail.page_data(data["p"]) if detail else None
     template = (HERE / "pizarra_template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
