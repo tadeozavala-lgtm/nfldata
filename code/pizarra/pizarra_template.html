@@ -2300,20 +2300,31 @@ const beTxt = () => fmtPct(BE);
 // sportsbook lines downloaded by the build (The Odds API): [game, player, market, line, over price, over book, under price, under book, books]
 const ODDS = D.odds;
 const breakEven = o => o < 0 ? -o / (-o + 100) : 100 / (o + 100);
+// the model was calibrated on lines from each player's own history, not on sportsbook lines,
+// which already price news the data lacks; so the probability shown is an even blend of the
+// model's and the market's (both prices with the bookmaker's margin removed; with only the
+// "yes" side, as in anytime TD, the margin is taken as a typical 4.5%)
+const MODEL_W = 0.5, ONE_SIDED_MARGIN = 1.045, REVIEW_GAP = 0.2, REVIEW_LOGIT = 1;
+// the model was fit on regular players and lines near even money: skip long shots and fringe players
+const PRICE_RANGE = [-300, 300], MIN_GAMES = 8;
+const lgt = p => Math.log(p / (1 - p));
+const marketOver = (op, up) => op != null && up != null ? breakEven(op) / (breakEven(op) + breakEven(up)) : op != null ? breakEven(op) / ONE_SIDED_MARGIN : 1 - breakEven(up) / ONE_SIDED_MARGIN;
 function oddsCandidates() {
   if (!ODDS || !PM) return [];
   const out = [];
   for (const [gi, pi, mk, line, op, ob, up, ub, nb] of ODDS.p) {
     const g = games[gi], p = players[pi]; if (!g || played(g) || !p || !MK[mk]) continue;
-    const r = propProb(p, mk, line); if (!r || r.ng !== g) continue;
-    const sides = [];
-    if (op != null) sides.push({pick: "over", prob: r.pOver, price: op, book: ODDS.books[ob]});
-    if (up != null) sides.push({pick: "under", prob: 1 - r.pOver, price: up, book: ODDS.books[ub]});
-    const best = sides.map(x => ({...x, be: breakEven(x.price), edge: x.prob - breakEven(x.price)})).sort((a, b) => b.edge - a.edge)[0];
+    const r = propProb(p, mk, line); if (!r || r.ng !== g || r.n10 < MIN_GAMES) continue;
+    const mOver = marketOver(op, up), pOver = MODEL_W * r.pOver + (1 - MODEL_W) * mOver, sides = [];
+    if (op != null) sides.push({pick: "over", prob: pOver, model: r.pOver, market: mOver, price: op, book: ODDS.books[ob]});
+    if (up != null) sides.push({pick: "under", prob: 1 - pOver, model: 1 - r.pOver, market: 1 - mOver, price: up, book: ODDS.books[ub]});
+    const best = sides.filter(x => x.price >= PRICE_RANGE[0] && x.price <= PRICE_RANGE[1])
+      .map(x => ({...x, be: breakEven(x.price), edge: x.prob - breakEven(x.price)})).sort((a, b) => b.edge - a.edge)[0];
     if (best) out.push({p, mk, line, nb, ...r, ...best});
   }
-  // outsized gaps usually mean news the data lacks: rank them after the plausible ones
-  return out.sort((a, b) => (a.edge > 0.15) - (b.edge > 0.15) || b.edge - a.edge);
+  // a model far from the market usually means news the data lacks: rank those after the rest
+  for (const c of out) c.review = Math.abs(c.model - c.market) > REVIEW_GAP || Math.abs(lgt(c.model) - lgt(c.market)) > REVIEW_LOGIT;
+  return out.sort((a, b) => a.review - b.review || b.edge - a.edge);
 }
 // on phones the pick tables become cards: each cell carries its column name
 function labelCells(t) {
@@ -2365,9 +2376,9 @@ function renderTop() {
   const fetched = ODDS && ODDS.fetched ? new Date(ODDS.fetched).toLocaleString("es", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : null;
   if (!PM) ps.append(el("p", {class:"muted", text:"Sin datos de jugadores para el modelo de props."}));
   else {
-    ps.append(el("p", {class:"chart-desc", text: (fromBooks ? `Líneas reales de ${ODDS.books.length} casas (${ODDS.books.join(", ")}), descargadas el ${fetched}: de cada prop se toma la línea que más casas ofrecen y el mejor momio de cada lado; se evaluaron ${pc.length} props y se ordenan por ventaja sobre el punto de equilibrio de su momio. ` :
+    ps.append(el("p", {class:"chart-desc", text: (fromBooks ? `Líneas reales de ${ODDS.books.length} casas (${ODDS.books.join(", ")}), descargadas el ${fetched}: de cada prop se toma la línea que más casas ofrecen y el mejor momio de cada lado; se evaluaron ${pc.length} props (momios entre −300 y +300, jugadores con ${MIN_GAMES}+ partidos recientes) y se ordenan por ventaja sobre el punto de equilibrio de su momio. La probabilidad es el promedio entre la del modelo y la del mercado (la que implican los momios de over y under sin la comisión de la casa): el modelo no se pudo probar contra líneas de casas, así que el mercado lo modera. ` :
       ODDS ? "Las líneas descargadas de las casas ya no tienen partidos pendientes; mientras llega la próxima descarga se usa tu lista. " : "") + (fromBooks ? "" : propsExample() ? "Estas son las props de ejemplo con líneas sugeridas por la pizarra, no de una casa de apuestas: agrega tus props con su línea real en la sección Props de jugadores de la Pizarra. " : `Se calculan sobre las ${currentProps().length} props de tu lista, con la línea que capturaste. `) +
-      (fromBooks ? "“Revisar” marca ventajas de más de 15 puntos: casi siempre la casa sabe algo (lesión, cambio de rol, titular que no juega). " : "") + "La probabilidad combina su porcentaje de over en sus últimos 10 y 20 partidos a esa línea, la letra de matchup y el total implícito de su equipo, con pesos ajustados en todos los partidos desde 2021."}));
+      (fromBooks ? "“Revisar” marca props donde el modelo y el mercado difieren mucho (más de 20 puntos, o una probabilidad casi triple que la otra): casi siempre la casa sabe algo (lesión, cambio de rol, titular que no juega). " : "") + "La probabilidad combina su porcentaje de over en sus últimos 10 y 20 partidos a esa línea, la letra de matchup y el total implícito de su equipo, con pesos ajustados en todos los partidos desde 2021."}));
     if (!ptop.length) ps.append(el("p", {class:"muted", text:"Ninguna prop de tu lista tiene próximo partido y al menos 5 partidos jugados."}));
     else {
       const t = el("table", {class:"splits top-t"});
@@ -2378,9 +2389,9 @@ function renderTop() {
           el("td", {}, document.createTextNode(oddsTxt(c.price)), el("div", {class:"muted", text: c.book ? c.book + (c.nb > 1 ? ` · ${c.nb} casas` : "") : "supuesto"})),
           el("td", {text: `${c.pick === "over" ? c.o10 : c.n10 - c.o10}/${c.n10}`}), el("td", {text: `${c.pick === "over" ? c.o20 : c.n20 - c.o20}/${c.n20}`}),
           el("td", {}, matchupPill(c.p, c.mk)),
-          el("td", {}, document.createTextNode(fmtPct(c.prob)), el("div", {class:"muted", text: `equilibrio ${fmtPct(c.be)}`})),
+          el("td", {}, document.createTextNode(fmtPct(c.prob)), el("div", {class:"muted", text: (c.market != null ? `modelo ${fmtPct(c.model)} · mercado ${fmtPct(c.market)} · ` : "") + `equilibrio ${fmtPct(c.be)}`})),
           el("td", {class: c.edge > 0 ? "pos" : "neg", text: signed(c.edge * 100) + " pts"}),
-          el("td", {}, c.edge > 0.15 ? el("span", {class:"pill warn", title:"Una diferencia tan grande con la casa suele significar algo que los datos no ven: lesión, cambio de rol, clima. Revisa noticias antes de apostar.", text:"Revisar"}) : statusPill(c.prob, c.be, "Supera su momio")),
+          el("td", {}, c.review ? el("span", {class:"pill warn", title:"El modelo y el mercado difieren más de 20 puntos: suele significar algo que los datos no ven (lesión, cambio de rol, clima). Revisa noticias antes de apostar.", text:"Revisar"}) : statusPill(c.prob, c.be, "Supera su momio")),
           el("td", {}, betButton("Apostar", () => ({...propDraft(c.p, c.mk, c.line, c.pick), odds: c.price, book: c.book})))))));
       ps.append(el("div", {class:"tbl-wrap"}, labelCells(t)));
     }
