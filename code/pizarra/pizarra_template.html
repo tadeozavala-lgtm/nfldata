@@ -164,6 +164,7 @@ details.tv .tbl-wrap{max-height:260px;overflow:auto}
 .pill.w{background:var(--good-wash);color:var(--good)}
 .pill.l{background:var(--bad-wash);color:var(--bad)}
 .pill.p{background:var(--neutral-wash);color:var(--ink-2)}
+.pill.warn{background:var(--warn-wash);color:var(--warn)}
 .muted{color:var(--ink-3)}
 .log:not(.st) td:nth-child(3){text-align:left}
 .log td,.log th{padding-inline:6px}
@@ -2105,7 +2106,7 @@ function openBetForm(d) {
   lineIn.value = d.line ?? ""; lineIn.disabled = d.kind === "ml";
   $("bf-line-wrap").hidden = d.kind === "ml";
   $("bf-odds").value = d.odds ?? -110; $("bf-stake").value = store.get("lastStake") || 10;
-  $("bf-book").value = store.get("lastBook") || ""; $("bf-notes").value = ""; $("bf-msg").textContent = "";
+  $("bf-book").value = d.book || store.get("lastBook") || ""; $("bf-notes").value = ""; $("bf-msg").textContent = "";
   if (Bets.mode === "pending") $("bf-msg").textContent = "Conectando con tu almacenamiento…";
   dlg.showModal();
 }
@@ -2296,14 +2297,32 @@ function propCandidates() {
   return out.sort((a, b) => b.prob - a.prob);
 }
 const beTxt = () => fmtPct(BE);
+// sportsbook lines downloaded by the build (The Odds API): [game, player, market, line, over price, over book, under price, under book, books]
+const ODDS = D.odds;
+const breakEven = o => o < 0 ? -o / (-o + 100) : 100 / (o + 100);
+function oddsCandidates() {
+  if (!ODDS || !PM) return [];
+  const out = [];
+  for (const [gi, pi, mk, line, op, ob, up, ub, nb] of ODDS.p) {
+    const g = games[gi], p = players[pi]; if (!g || played(g) || !p || !MK[mk]) continue;
+    const r = propProb(p, mk, line); if (!r || r.ng !== g) continue;
+    const sides = [];
+    if (op != null) sides.push({pick: "over", prob: r.pOver, price: op, book: ODDS.books[ob]});
+    if (up != null) sides.push({pick: "under", prob: 1 - r.pOver, price: up, book: ODDS.books[ub]});
+    const best = sides.map(x => ({...x, be: breakEven(x.price), edge: x.prob - breakEven(x.price)})).sort((a, b) => b.edge - a.edge)[0];
+    if (best) out.push({p, mk, line, nb, ...r, ...best});
+  }
+  // outsized gaps usually mean news the data lacks: rank them after the plausible ones
+  return out.sort((a, b) => (a.edge > 0.15) - (b.edge > 0.15) || b.edge - a.edge);
+}
 // on phones the pick tables become cards: each cell carries its column name
 function labelCells(t) {
   const hs = [...t.querySelectorAll("thead th")].map(th => th.textContent);
   t.querySelectorAll("tbody tr").forEach(tr => [...tr.children].forEach((td, i) => { if (hs[i]) td.dataset.label = hs[i]; }));
   return t;
 }
-function statusPill(prob) {
-  return prob >= BE ? el("span", {class:"pill w", text:"Supera " + beTxt()}) : el("span", {class:"pill p", text:"Sin ventaja"});
+function statusPill(prob, be = BE, txt = "Supera " + beTxt()) {
+  return prob >= be ? el("span", {class:"pill w", text: txt}) : el("span", {class:"pill p", text:"Sin ventaja"});
 }
 function renderTop() {
   const host = $("view-top"); host.replaceChildren();
@@ -2341,22 +2360,28 @@ function renderTop() {
   // props
   const ps = el("section", {class:"panel"});
   ps.append(el("h3", {text:"Props de jugadores"}));
-  const pc = propCandidates(), ptop = pc.slice(0, 5);
+  const oc = oddsCandidates(), fromBooks = oc.length > 0;
+  const pc = fromBooks ? oc : propCandidates().map(c => ({...c, price: -110, be: BE, edge: c.prob - BE})), ptop = pc.slice(0, 5);
+  const fetched = ODDS && ODDS.fetched ? new Date(ODDS.fetched).toLocaleString("es", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : null;
   if (!PM) ps.append(el("p", {class:"muted", text:"Sin datos de jugadores para el modelo de props."}));
   else {
-    ps.append(el("p", {class:"chart-desc", text: (propsExample() ? "Estas son las props de ejemplo con líneas sugeridas por la pizarra, no de una casa de apuestas: agrega tus props con su línea real en la sección Props de jugadores de la Pizarra. " : `Se calculan sobre las ${currentProps().length} props de tu lista, con la línea que capturaste. `) +
-      "La probabilidad combina su porcentaje de over en sus últimos 10 y 20 partidos a esa línea, la letra de matchup y el total implícito de su equipo, con pesos ajustados en todos los partidos desde 2021."}));
+    ps.append(el("p", {class:"chart-desc", text: (fromBooks ? `Líneas reales de ${ODDS.books.length} casas (${ODDS.books.join(", ")}), descargadas el ${fetched}: de cada prop se toma la línea que más casas ofrecen y el mejor momio de cada lado; se evaluaron ${pc.length} props y se ordenan por ventaja sobre el punto de equilibrio de su momio. ` :
+      ODDS ? "Las líneas descargadas de las casas ya no tienen partidos pendientes; mientras llega la próxima descarga se usa tu lista. " : "") + (fromBooks ? "" : propsExample() ? "Estas son las props de ejemplo con líneas sugeridas por la pizarra, no de una casa de apuestas: agrega tus props con su línea real en la sección Props de jugadores de la Pizarra. " : `Se calculan sobre las ${currentProps().length} props de tu lista, con la línea que capturaste. `) +
+      (fromBooks ? "“Revisar” marca ventajas de más de 15 puntos: casi siempre la casa sabe algo (lesión, cambio de rol, titular que no juega). " : "") + "La probabilidad combina su porcentaje de over en sus últimos 10 y 20 partidos a esa línea, la letra de matchup y el total implícito de su equipo, con pesos ajustados en todos los partidos desde 2021."}));
     if (!ptop.length) ps.append(el("p", {class:"muted", text:"Ninguna prop de tu lista tiene próximo partido y al menos 5 partidos jugados."}));
     else {
       const t = el("table", {class:"splits top-t"});
-      t.append(el("thead", {}, el("tr", {}, ...["Jugador", "Apuesta", "Últ. 10", "Últ. 20", "Matchup", "Prob.", "", ""].map(h => el("th", {text: h})))),
+      t.append(el("thead", {}, el("tr", {}, ...["Jugador", "Apuesta", "Momio", "Últ. 10", "Últ. 20", "Matchup", "Prob.", "Ventaja", "", ""].map(h => el("th", {text: h})))),
         el("tbody", {}, ...ptop.map(c => el("tr", {},
           el("td", {}, el("b", {text: c.p.nm}), el("div", {class:"muted", text: `${c.p.pos} · ${c.p.team} ${fr(c.ng.home) === fr(c.p.team) ? "vs" : "@"} ${oppIn(c.ng, fr(c.p.team))}`})),
           el("td", {}, el("b", {text: `${c.pick === "over" ? "Over" : "Under"} ${String(c.line).replace(".", ",")}`}), el("div", {class:"muted", text: MK[c.mk].name})),
+          el("td", {}, document.createTextNode(oddsTxt(c.price)), el("div", {class:"muted", text: c.book ? c.book + (c.nb > 1 ? ` · ${c.nb} casas` : "") : "supuesto"})),
           el("td", {text: `${c.pick === "over" ? c.o10 : c.n10 - c.o10}/${c.n10}`}), el("td", {text: `${c.pick === "over" ? c.o20 : c.n20 - c.o20}/${c.n20}`}),
           el("td", {}, matchupPill(c.p, c.mk)),
-          el("td", {text: fmtPct(c.prob)}), el("td", {}, statusPill(c.prob)),
-          el("td", {}, betButton("Apostar", () => propDraft(c.p, c.mk, c.line, c.pick)))))));
+          el("td", {}, document.createTextNode(fmtPct(c.prob)), el("div", {class:"muted", text: `equilibrio ${fmtPct(c.be)}`})),
+          el("td", {class: c.edge > 0 ? "pos" : "neg", text: signed(c.edge * 100) + " pts"}),
+          el("td", {}, c.edge > 0.15 ? el("span", {class:"pill warn", title:"Una diferencia tan grande con la casa suele significar algo que los datos no ven: lesión, cambio de rol, clima. Revisa noticias antes de apostar.", text:"Revisar"}) : statusPill(c.prob, c.be, "Supera su momio")),
+          el("td", {}, betButton("Apostar", () => ({...propDraft(c.p, c.mk, c.line, c.pick), odds: c.price, book: c.book})))))));
       ps.append(el("div", {class:"tbl-wrap"}, labelCells(t)));
     }
     const cal = el("table", {class:"splits"});

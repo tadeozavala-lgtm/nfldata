@@ -23,8 +23,10 @@ Usage:
 import argparse
 import bisect
 import csv
+import datetime as dt
 import json
 import math
+import unicodedata
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -982,11 +984,90 @@ class PropModel:
         return {"coef": coef, "fam": PROP_FAMILY, "cal": cal, "calB": PROP_CAL, "test": test_seasons, "be": BREAK_EVEN}
 
 
+# ---------- sportsbook prop lines (The Odds API snapshot from fetch_odds.py) ----------
+ODDS_MARKETS = {"player_pass_yds": "passing_yards", "player_pass_tds": "passing_tds", "player_pass_completions": "completions",
+                "player_pass_attempts": "attempts", "player_pass_interceptions": "interceptions", "player_rush_yds": "rushing_yards",
+                "player_rush_attempts": "carries", "player_receptions": "receptions", "player_reception_yds": "receiving_yards",
+                "player_rush_reception_yds": "rush_rec", "player_pass_rush_yds": "pass_rush", "player_anytime_td": "anytime_td"}
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def norm_name(s):
+    """'Kenneth Walker III' -> 'kenneth walker', 'D.J. Moore' -> 'dj moore', accents dropped."""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+    s = "".join(ch for ch in s if ch.isalnum() or ch.isspace() or ch == "-").replace("-", " ")
+    return " ".join(w for w in s.split() if w not in NAME_SUFFIXES)
+
+
+def build_odds(path, games, names, pdata):
+    """Consensus prop lines for the coming games from a fetch_odds.py snapshot: for each player
+    and market, the line most books offer and the best over and under prices at that line.
+    Rows: [game, player, market, line, over price, over book, under price, under book, books]
+    (book = index into "books"; anytime TD has only the "yes" side, stored as over at 0.5)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            snap = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"No odds snapshot ({e})")
+        return None
+    abbr = {full: t for t, full in names.items()}
+    fr = lambda t: FRANCHISE.get(t, t)
+    # each player's latest team, and players by normalized name
+    last = {}
+    for r in pdata["r"]:
+        if r[0] not in last or games[r[1]][3] >= games[last[r[0]][1]][3]:
+            last[r[0]] = r
+    by_name = {}
+    for i, p in enumerate(pdata["pl"]):
+        if i in last:
+            by_name.setdefault(norm_name(p[1]), []).append(i)
+    books, bix, rows, unmatched = [], {}, [], set()
+    for ev in snap.get("events", []):
+        h, a = abbr.get(ev.get("home_team")), abbr.get(ev.get("away_team"))
+        day = (ev.get("commence_time") or "")[:10]
+        cand = [gi for gi, g in enumerate(games) if g[7] is None and fr(g[6]) == h and fr(g[4]) == a]
+        if not cand or not day:
+            continue
+        gi = min(cand, key=lambda gi: abs((dt.date.fromisoformat(games[gi][3]) - dt.date.fromisoformat(day)).days))
+        if abs((dt.date.fromisoformat(games[gi][3]) - dt.date.fromisoformat(day)).days) > 2:
+            continue
+        offers = {}  # (player, market) -> {line: {"o": [(price, book)], "u": [...]}}
+        for b in ev.get("bookmakers", []):
+            if b["title"] not in bix:
+                bix[b["title"]] = len(books)
+                books.append(b["title"])
+            for m in b.get("markets", []):
+                mk = ODDS_MARKETS.get(m["key"])
+                if not mk:
+                    continue
+                for o in m.get("outcomes", []):
+                    who = norm_name(o.get("description") or "")
+                    ids = [i for i in by_name.get(who, []) if fr(last[i][2]) in (h, a)]
+                    if len(ids) != 1:
+                        unmatched.add(o.get("description"))
+                        continue
+                    side = {"over": "o", "yes": "o", "under": "u"}.get(str(o.get("name")).lower())
+                    line = 0.5 if mk == "anytime_td" else o.get("point")
+                    if side and line is not None and o.get("price") is not None:
+                        offers.setdefault((ids[0], mk), {}).setdefault(line, {"o": [], "u": []})[side].append((o["price"], bix[b["title"]]))
+        for (pi, mk), by_line in offers.items():
+            # main line: the one most books quote (both sides counted), ties to the lower line
+            line = max(by_line, key=lambda ln: (len({bk for _, bk in by_line[ln]["o"] + by_line[ln]["u"]}), -ln))
+            o, u = by_line[line]["o"], by_line[line]["u"]
+            best = lambda lst: max(lst, key=lambda x: x[0]) if lst else (None, None)  # highest American price pays most
+            (op, ob), (up, ub) = best(o), best(u)
+            rows.append([gi, pi, mk, line, op, ob, up, ub, len({bk for _, bk in o + u})])
+    print(f"Odds: {len(rows)} prop lines for {len({r[0] for r in rows})} games from {len(books)} books "
+          f"(snapshot {snap.get('fetched')}, {snap.get('remaining')} credits left); {len(unmatched)} names not matched")
+    return {"fetched": snap.get("fetched"), "books": books, "p": rows, "remaining": snap.get("remaining")} if rows else None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-o", "--output", type=Path, default=HERE / "pizarra-nfl.html")
     ap.add_argument("--no-players", action="store_true",
                     help="skip all nflverse downloads: local CSVs only, no player/ranking/EPA sections")
+    ap.add_argument("--odds", type=Path, help="prop lines snapshot from fetch_odds.py (optional)")
     args = ap.parse_args()
 
     data, game_index = build_data(remote=not args.no_players)
@@ -1003,6 +1084,7 @@ def main():
     hooks = [h for h in (detail, PropModel(data["g"]) if data["p"] else None) if h]
     data["mv"] = build_matchup_validation(data["g"], data["p"], hooks) if data["p"] else None
     data["gp"] = build_game_picks(data["g"], data["e"]) if data["e"] else None
+    data["odds"] = build_odds(args.odds, data["g"], data["n"], data["p"]) if args.odds and data["p"] else None
     data["z"] = detail.page_data(data["p"]) if detail else None
     template = (HERE / "pizarra_template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
