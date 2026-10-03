@@ -31,8 +31,20 @@ jobs:
       - name: Install nflreadpy
         run: pip install "nflreadpy>=0.1.5,<0.2"
 
+      # prop lines saved by the "Fetch NFL odds" workflow on the odds-data branch (optional)
+      - name: Get the latest odds snapshot
+        run: |
+          if git fetch --depth 1 origin odds-data; then
+            git show FETCH_HEAD:nfl_odds.json > "$RUNNER_TEMP/nfl_odds.json"
+          else
+            echo "No odds snapshot yet"
+          fi
+
       - name: Build dashboard
-        run: python3 code/pizarra/build_pizarra.py -o pizarra-nfl.html
+        run: |
+          odds=()
+          if [ -s "$RUNNER_TEMP/nfl_odds.json" ]; then odds=(--odds "$RUNNER_TEMP/nfl_odds.json"); fi
+          python3 code/pizarra/build_pizarra.py -o pizarra-nfl.html "${odds[@]}"
 
       - name: Upload dashboard
         uses: actions/upload-artifact@v4

@@ -1,0 +1,49 @@
+on:
+  workflow_dispatch:
+  # Thursdays: props for the whole week are posted by then. Each run spends about
+  # one credit per prop market per game (~100), so weekly fits the free plan (500/month)
+  schedule:
+    - cron: "23 14 * * 4"
+
+name: Fetch NFL odds
+permissions:
+  contents: write
+  actions: write
+concurrency: fetch-odds
+
+jobs:
+  fetch_odds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch prop lines from The Odds API
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python3 code/pizarra/fetch_odds.py -o "$RUNNER_TEMP/nfl_odds.json"
+
+      # the snapshot lives on its own branch so it doesn't add commits to master
+      - name: Save the snapshot to the odds-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth 1 origin odds-data; then
+            git switch -c odds-data FETCH_HEAD
+          else
+            git switch --orphan odds-data
+          fi
+          cp "$RUNNER_TEMP/nfl_odds.json" nfl_odds.json
+          git add nfl_odds.json
+          git commit -qm "Odds snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin odds-data
+
+      - name: Rebuild the dashboard with the new lines
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build_pizarra.yml --ref "${{ github.event.repository.default_branch }}"
