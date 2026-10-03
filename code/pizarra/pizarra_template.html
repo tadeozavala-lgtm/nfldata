@@ -215,6 +215,21 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
 .splits tr.now td{background:var(--accent-wash);font-weight:600}
 #pdetail{display:flex;flex-direction:column;gap:12px}
 #pdetail .tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--rule)}
+.tabs button{font:inherit;font-family:var(--display);font-size:18px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;background:none;border:0;border-bottom:3px solid transparent;color:var(--ink-3);padding:8px 14px;cursor:pointer;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.tab-count{font-family:var(--body);font-size:12px;font-weight:700;text-transform:none;letter-spacing:0;color:var(--accent)}
+#view-board,#view-bets{display:flex;flex-direction:column;gap:28px}
+.flash{position:sticky;top:env(safe-area-inset-top,0px);z-index:6;background:var(--accent-wash);border:1px solid var(--accent);border-radius:8px;padding:8px 12px;font-size:14px}
+.bet-btn{padding:3px 10px;font-size:12px;white-space:nowrap}
+dialog#bet-dlg{border:1px solid var(--rule);border-radius:10px;background:var(--surface);color:var(--ink);padding:18px;width:min(560px,calc(100vw - 32px));max-width:100%}
+dialog#bet-dlg::backdrop{background:rgba(0,0,0,.45)}
+.bet-form{display:flex;flex-direction:column;gap:10px}
+.bet-form h3{font-size:21px}
+.bet-form input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:7px 10px;width:100%}
+.bets-t td:nth-child(1),.bets-t td:nth-child(2),.bets-t td:nth-child(6){text-align:left;white-space:normal}
+.bets-t select{padding:4px 26px 4px 8px;font-size:13px}
+.profit-plot svg{display:block;width:100%;height:auto}
 .foot{color:var(--ink-3);font-size:13px;max-width:80ch}
 .foot code{font-size:12px}
 .fade{transition:opacity .15s}
@@ -230,6 +245,13 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
     <div class="yardline" aria-hidden="true"></div>
   </header>
 
+  <nav class="tabs" role="tablist" aria-label="Secciones">
+    <button type="button" role="tab" id="tab-board" aria-selected="true" aria-controls="view-board">Pizarra</button>
+    <button type="button" role="tab" id="tab-bets" aria-selected="false" aria-controls="view-bets">Mis apuestas <span class="tab-count" id="bets-count"></span></button>
+  </nav>
+  <div class="flash" id="flash" role="status" hidden></div>
+
+  <div id="view-board" role="tabpanel" aria-labelledby="tab-board">
   <div class="filters" role="group" aria-label="Filtros">
     <div class="filters-sum" id="filters-sum" hidden>
       <span class="filters-txt" id="filters-txt"></span>
@@ -296,6 +318,28 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
   </section>
 
   <p class="foot">Fuente: <code>nfldata/data/games.csv</code> y <code>standings.csv</code> (nflverse). La línea (<em>spread</em>) se muestra desde la perspectiva del equipo: negativa si es favorito. Un partido “cubre” cuando el margen supera la línea; los empates con la línea (<em>push</em>) se excluyen de los porcentajes. Mientras una temporada está en curso, solo aparece en las gráficas de tendencia si la seleccionas, y nunca entra en el histórico. En el histórico, la ventana de años se aplica a toda la página y el filtro de rival muestra solo los partidos entre los dos equipos. Los traslados se agrupan por franquicia: OAK → LV, SD → LAC, STL → LA. Estadísticas de jugador y reporte de lesiones: nflverse, cargados con <code>nflreadpy</code>. Las líneas de props y las del panel “Líneas del partido” las escribes tú; los porcentajes de over son históricos, no incluyen la comisión de la casa y con pocos partidos la muestra es pequeña.</p>
+  </div>
+
+  <div id="view-bets" role="tabpanel" aria-labelledby="tab-bets" hidden></div>
+
+  <dialog id="bet-dlg" aria-labelledby="bet-dlg-title">
+    <form id="bet-form" class="bet-form">
+      <h3 id="bet-dlg-title">Registrar apuesta</h3>
+      <p class="chart-desc" id="bf-desc"></p>
+      <div class="prop-form">
+        <div class="field"><label for="bf-side">Selección</label><select id="bf-side"></select></div>
+        <div class="field narrow" id="bf-line-wrap"><label for="bf-line">Línea</label><input id="bf-line" type="number" step="0.5"></div>
+        <div class="field narrow"><label for="bf-odds">Cuota (americana)</label><input id="bf-odds" type="number" step="1" value="-110"></div>
+        <div class="field narrow"><label for="bf-stake">Monto ($)</label><input id="bf-stake" type="number" step="1" min="0"></div>
+      </div>
+      <div class="prop-form">
+        <div class="field"><label for="bf-book">Casa de apuestas</label><input id="bf-book" type="text" list="" placeholder="Opcional" maxlength="40"></div>
+        <div class="field grow"><label for="bf-notes">Notas</label><input id="bf-notes" type="text" list="" placeholder="Opcional" maxlength="200"></div>
+      </div>
+      <p class="form-msg" id="bf-msg" role="status"></p>
+      <div class="btn-row"><button type="submit" class="btn">Guardar apuesta</button><button type="button" class="btn ghost" id="bf-cancel">Cancelar</button></div>
+    </form>
+  </dialog>
 </div>
 
 <script>
@@ -1198,7 +1242,8 @@ function renderProps() {
     const tr = el("tr", {tabindex:"0", "aria-label": `Ver ${p.nm}`},
       el("td", {}, el("div", {class:"team-cell"}, teamMark(p.team), el("b", {text: p.nm}), el("span", {class:"muted", text: `${p.pos} · ${p.team}`}), depthTag(p), injTag(p))),
       el("td", {text: MK[x.m].name}), el("td", {text: String(x.line).replace(".", ",")}), el("td", {}, nextOppCell(p)), el("td", {}, matchupPill(p, x.m)),
-      el("td", {text: fmtNum(w[1][1].avg)}), expCell(pRows(p).slice(-10), x.m), hcell(w[0][1]), hcell(w[1][1]), hcell(w[2][1]), hcell(w[3][1]), el("td", {}, trendPill(w[1][1])), el("td", {}, del));
+      el("td", {text: fmtNum(w[1][1].avg)}), expCell(pRows(p).slice(-10), x.m), hcell(w[0][1]), hcell(w[1][1]), hcell(w[2][1]), hcell(w[3][1]), el("td", {}, trendPill(w[1][1])),
+      el("td", {}, el("div", {class:"btn-row"}, betButton("Apostar", () => propDraft(p, x.m, x.line)), del)));
     if (state.player === p.id && state.pmarket === x.m) tr.classList.add("sel");
     const pick = () => { setState({player: p.id, pmarket: x.m, pline: x.line}); $("pdetail").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); };
     tr.addEventListener("click", pick);
@@ -1348,7 +1393,8 @@ function renderPlayerDetail() {
   host.append(el("div", {class:"prop-form"},
     el("div", {class:"field grow"}, el("label", {for:"pd-player", text:"Jugador"}), search),
     el("div", {class:"field"}, el("label", {for:"pd-market", text:"Mercado"}), selMk),
-    el("div", {class:"field narrow"}, el("label", {for:"pd-line", text:"Línea"}), inLine), addBtn));
+    el("div", {class:"field narrow"}, el("label", {for:"pd-line", text:"Línea"}), inLine), addBtn,
+    betButton("Registrar apuesta", () => propDraft(p, mk, line))));
   // hit-rate tiles
   const tiles = el("div", {class:"tiles"});
   for (const [lbl, h] of windows(p, mk, line)) tiles.append(tile(lbl, h.n ? fmtPct(h.o / h.n) : "—", h.n ? `over ${h.o} de ${h.n} · media ${fmtNum(h.avg)}` : "sin partidos"));
@@ -1483,6 +1529,11 @@ function renderGameLines() {
     el("div", {class:"field"}, el("label", {for:"gl-home", text:"Sede"}), selH),
     el("div", {class:"field narrow"}, el("label", {for:"gl-spread", text:`Spread de ${homeTeam}`}), inS),
     el("div", {class:"field narrow"}, el("label", {for:"gl-total", text:"Over/under"}), inT)));
+  if (ng) host.append(el("div", {class:"btn-row"},
+    betButton("Apostar spread", () => ({kind: "spread", game: ng, pick: T, line: lineT})),
+    betButton("Apostar total", () => ({kind: "total", game: ng, pick: "over", line: total})),
+    betButton("Apostar moneyline", () => ({kind: "ml", game: ng, pick: T, odds: -110})),
+    el("span", {class:"sec-note", text:`Para el próximo partido de ${T}; se guardan en “Mis apuestas”.`})));
   if (ng) host.append(el("p", {class:"chart-desc", text: `Próximo partido: ${fr(ng.home) === T ? "vs" : "@"} ${name(oppIn(ng, T))}, ${dateShort(ng.date)}` +
     (ng.spread != null ? ` · línea en games.csv: ${ng.home} ${lineTxt(-ng.spread)}, total ${String(ng.total).replace(".", ",")}` : " · sin línea publicada todavía") +
     (state.gspread == null && state.gtotal == null && ng.spread != null ? ". Los campos parten de esa línea; cámbialos por la tuya." : ".")}));
@@ -1791,6 +1842,254 @@ function renderNextGame() {
       el("div", {class:"ng-line muted", text: line + (rest[0] != null && rest[1] != null ? ` · Descanso: ${T} ${rest[0]} días, ${oppT} ${rest[1]}` : "")})));
 }
 
+// ---------- bet tracker (tab "Mis apuestas") ----------
+// Bets live in the viewer's private db subtree (data/users/<id>/ledger/bets/<bet>) when the
+// published page can use `db`; otherwise (a downloaded copy, signed out) in this browser.
+// A bet names its game by season/week/teams and its player by gsis id, never by array index,
+// so it survives rebuilds of the page.
+const BET_KINDS = {prop:"Prop de jugador", spread:"Spread", total:"Total (over/under)", ml:"Moneyline"};
+const BET_STATUS = {pending:"Pendiente", won:"Ganada", lost:"Perdida", push:"Push", void:"Anulada"};
+const Bets = {mode: "pending", list: [], col: null, error: "", localKey: "bets"};
+const betsLocal = () => { try { const v = JSON.parse(store.get(Bets.localKey) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+const betsLocalSave = list => store.set(Bets.localKey, JSON.stringify(list));
+function onBetsChange() {
+  const pend = Bets.list.filter(b => b.status === "pending").length;
+  $("bets-count").textContent = Bets.list.length ? (pend ? `${pend} pendiente${pend > 1 ? "s" : ""}` : String(Bets.list.length)) : "";
+  if (!$("view-bets").hidden) renderBets();
+}
+function useLocalBets(reason) {
+  Bets.mode = "local"; Bets.reason = reason; Bets.list = betsLocal(); onBetsChange();
+}
+async function initBets() {
+  if (!window.claude || typeof window.claude.use !== "function") return useLocalBets("copy");
+  const [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
+  const uid = user ? await user.id() : null;
+  if (!db || !uid) return useLocalBets("nodb");
+  Bets.mode = "db";
+  Bets.col = db.doc(`data/users/${uid}/ledger`).collection("bets");
+  Bets.col.onSnapshot(snap => { Bets.list = snap.docs.map(d => ({...d.data(), id: d.id})); onBetsChange(); },
+    err => { Bets.error = err.code; onBetsChange(); });
+}
+function betError(e) {
+  const code = e && e.code;
+  Bets.error = code === "quota_exceeded" ? "Se llenó el espacio de la base de datos: borra apuestas viejas para agregar nuevas."
+    : code === "invalid_argument" ? "Tu nivel de acceso a esta pizarra no permite guardar datos." : "No se pudo guardar; intenta de nuevo en un momento.";
+  onBetsChange();
+}
+async function addBet(b) {
+  const bet = {...b, status: "pending", created: new Date().toISOString()};
+  if (Bets.mode === "db") { try { await Bets.col.add(bet); Bets.error = ""; return true; } catch (e) { betError(e); return false; } }
+  bet.id = "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  Bets.list = [...Bets.list, bet]; betsLocalSave(Bets.list); onBetsChange(); return true;
+}
+async function updateBet(id, patch) {
+  if (Bets.mode === "db") { try { await Bets.col.doc(id).update(patch); } catch (e) { betError(e); } return; }
+  Bets.list = Bets.list.map(b => b.id === id ? {...b, ...patch} : b); betsLocalSave(Bets.list); onBetsChange();
+}
+async function deleteBet(id) {
+  if (Bets.mode === "db") { try { await Bets.col.doc(id).delete(); } catch (e) { betError(e); } return; }
+  Bets.list = Bets.list.filter(b => b.id !== id); betsLocalSave(Bets.list); onBetsChange();
+}
+
+// game identity <-> game object
+const gameKey = g => ({season: g.season, week: g.week, gtype: g.type, date: g.date, away: fr(g.away), home: fr(g.home)});
+const findGame = b => games.find(g => g.season === b.season && g.week === b.week && g.type === b.gtype && fr(g.home) === b.home && fr(g.away) === b.away);
+const americanProfit = (stake, odds) => odds > 0 ? stake * odds / 100 : stake * 100 / Math.abs(odds);
+const oddsTxt = o => (o > 0 ? "+" : "−") + Math.abs(o);
+const money = v => (v < 0 ? "−$" : "$") + Math.abs(v).toFixed(2);
+const betProfit = b => b.status === "won" ? americanProfit(b.stake, b.odds) : b.status === "lost" ? -b.stake : 0;
+
+// result from the data, when the game has been played: {status, txt}
+function resolveBet(b) {
+  const g = findGame(b); if (!g) return null;
+  if (b.kind === "prop") {
+    const p = playerById[b.pid]; if (!p) return null;
+    const r = p.rows.find(x => x.g === g);
+    if (!r) return played(g) || statsGames.has(g) ? {status: "void", txt: "No jugó"} : null;
+    const v = MK[b.market].f(r);
+    return {status: v === b.line ? "push" : (v > b.line) === (b.pick === "over") ? "won" : "lost", txt: `${v} ${MK_WHAT[b.market]}`};
+  }
+  if (!played(g)) return null;
+  const pts = t => fr(g.home) === t ? g.hs : g.as;
+  if (b.kind === "total") { const tot = g.hs + g.as;
+    return {status: tot === b.line ? "push" : (tot > b.line) === (b.pick === "over") ? "won" : "lost", txt: `${tot} puntos`}; }
+  const other = b.pick === b.home ? b.away : b.home, m = pts(b.pick) - pts(other), score = `${b.pick} ${pts(b.pick)}-${pts(other)}`;
+  if (b.kind === "spread") { const a = m + b.line; return {status: a === 0 ? "push" : a > 0 ? "won" : "lost", txt: score}; }
+  return {status: m === 0 ? "push" : m > 0 ? "won" : "lost", txt: score};
+}
+function betLabel(b) {
+  if (b.kind === "prop") return `${b.pname} · ${MK[b.market] ? MK[b.market].name : b.market} · ${b.pick === "over" ? "Over" : "Under"} ${String(b.line).replace(".", ",")}`;
+  if (b.kind === "total") return `Total ${b.pick === "over" ? "Over" : "Under"} ${String(b.line).replace(".", ",")}`;
+  if (b.kind === "spread") return `${b.pick} ${lineTxt(b.line)}`;
+  return `${b.pick} gana (moneyline)`;
+}
+
+// ---- registration dialog (opened from the board)
+let betDraft = null;
+function openBetForm(d) {
+  betDraft = d;
+  const dlg = $("bet-dlg"), sideSel = $("bf-side"), lineIn = $("bf-line");
+  $("bet-dlg-title").textContent = "Registrar apuesta · " + BET_KINDS[d.kind];
+  const g = d.game, day = new Date(g.date + "T12:00:00").toLocaleDateString("es", {day:"numeric", month:"short", year:"numeric"});
+  $("bf-desc").textContent = (d.kind === "prop" ? `${d.pname} (${d.pos}, ${d.team}) · ${MK[d.market].name} · ` : "") +
+    `${fr(g.away)} @ ${fr(g.home)}, ${g.type === "REG" ? "semana " + g.week : g.type}, ${day}` + (d.grade ? ` · Matchup ${d.grade}` : "");
+  const opts = d.kind === "prop" || d.kind === "total" ? [["over", "Over"], ["under", "Under"]] : [[fr(g.away), name(fr(g.away))], [fr(g.home), name(fr(g.home))]];
+  sideSel.replaceChildren(...opts.map(([v, t]) => el("option", {value: v, text: t})));
+  sideSel.value = d.pick || opts[0][0];
+  d.lastPick = sideSel.value;
+  lineIn.value = d.line ?? ""; lineIn.disabled = d.kind === "ml";
+  $("bf-line-wrap").hidden = d.kind === "ml";
+  $("bf-odds").value = d.odds ?? -110; $("bf-stake").value = store.get("lastStake") || 10;
+  $("bf-book").value = store.get("lastBook") || ""; $("bf-notes").value = ""; $("bf-msg").textContent = "";
+  if (Bets.mode === "pending") $("bf-msg").textContent = "Conectando con tu almacenamiento…";
+  dlg.showModal();
+}
+// switching side on a spread flips the line to that team's perspective
+function onBetSide() {
+  const d = betDraft; if (!d || d.kind !== "spread") return;
+  const v = parseFloat($("bf-line").value); if (isNaN(v)) return;
+  if (d.lastPick && d.lastPick !== $("bf-side").value) $("bf-line").value = -v;
+  d.lastPick = $("bf-side").value;
+}
+async function submitBetForm(e) {
+  e.preventDefault();
+  const d = betDraft, msg = $("bf-msg"); if (!d) return;
+  const odds = parseFloat($("bf-odds").value), stake = parseFloat($("bf-stake").value), line = parseFloat($("bf-line").value);
+  if (!(Math.abs(odds) >= 100)) { msg.textContent = "Escribe la cuota americana, por ejemplo −110 o +150."; return; }
+  if (!(stake > 0)) { msg.textContent = "Escribe el monto apostado."; return; }
+  if (d.kind !== "ml" && isNaN(line)) { msg.textContent = "Escribe la línea."; return; }
+  if (Bets.mode === "pending") { msg.textContent = "Todavía conectando con tu almacenamiento; intenta en un segundo."; return; }
+  const bet = {kind: d.kind, ...gameKey(d.game), pick: $("bf-side").value, line: d.kind === "ml" ? null : line, odds, stake,
+    book: $("bf-book").value.trim().slice(0, 40), notes: $("bf-notes").value.trim().slice(0, 200)};
+  if (d.kind === "prop") Object.assign(bet, {pid: d.pid, pname: d.pname, pos: d.pos, team: d.team, market: d.market, grade: d.grade || ""});
+  store.set("lastStake", String(stake)); if (bet.book) store.set("lastBook", bet.book);
+  const ok = await addBet(bet);
+  if (!ok) { msg.textContent = Bets.error; return; }
+  $("bet-dlg").close();
+  flash(`Apuesta guardada en “Mis apuestas”: ${betLabel(bet)}`);
+}
+function flash(text) {
+  const f = $("flash"); f.replaceChildren(document.createTextNode(text + " "), (() => { const b = el("button", {type:"button", class:"linkbtn", text:"Ver mis apuestas"}); b.addEventListener("click", () => showTab("bets")); return b; })());
+  f.hidden = false; clearTimeout(flash.t); flash.t = setTimeout(() => { f.hidden = true; }, 6000);
+}
+// entry points used by the board
+function betButton(label, draft) {
+  const b = el("button", {type:"button", class:"btn ghost bet-btn", text: label});
+  b.addEventListener("click", e => { e.stopPropagation(); const d = draft(); if (d) openBetForm(d); else flash("Este jugador o equipo no tiene próximo partido en el calendario."); });
+  return b;
+}
+function propDraft(p, mk, line) {
+  const g = nextGame[fr(p.team)]; if (!g) return null;
+  const mu = matchupFor(p, mk);
+  return {kind: "prop", game: g, pid: p.id, pname: p.nm, pos: p.pos, team: p.team, market: mk, line, pick: "over", grade: mu ? mu.grade + mu.mod : ""};
+}
+
+// ---- tab 2
+let betFilter = "all", betDeleting = null;
+function renderBets() {
+  const host = $("view-bets"); host.replaceChildren();
+  const head = el("div", {class:"sec-head"}, el("h2", {text:"Mis apuestas"}),
+    el("span", {class:"sec-note", text: Bets.mode === "db" ? "Guardadas en tu cuenta de forma privada: solo tú las ves." :
+      Bets.mode === "local" ? "Guardadas solo en este navegador: si lo limpias o cambias de dispositivo, se pierden. Usa “Copiar CSV” como respaldo." : "Conectando con tu almacenamiento…"}));
+  host.append(head);
+  if (Bets.error) host.append(el("p", {class:"form-msg", role:"status", text: typeof Bets.error === "string" && Bets.error.length > 20 ? Bets.error : "Hubo un problema con el almacenamiento de apuestas."}));
+  const list = [...Bets.list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || "").localeCompare(a.created || ""));
+  // migration from this browser into the account
+  const local = Bets.mode === "db" ? betsLocal() : [];
+  if (local.length) { const mb = el("button", {type:"button", class:"btn ghost", text:`Pasar ${local.length} apuesta(s) guardadas en este navegador a tu cuenta`});
+    mb.addEventListener("click", async () => { mb.disabled = true; for (const b of local) { const {id, ...rest} = b; try { await Bets.col.add(rest); } catch (e) { betError(e); return; } } betsLocalSave([]); renderBets(); });
+    host.append(mb); }
+  if (!list.length) {
+    host.append(el("div", {class:"panel"}, el("p", {class:"chart-desc", text:"Todavía no registras apuestas. En la pestaña “Pizarra” usa “Apostar” en tu lista de props o en el detalle de un jugador, o los botones de spread, total y moneyline en “Líneas del partido”."})));
+    return;
+  }
+  const settled = list.filter(b => b.status !== "pending"), decided = settled.filter(b => b.status === "won" || b.status === "lost");
+  const staked = settled.filter(b => b.status !== "void").reduce((s, b) => s + b.stake, 0), net = settled.reduce((s, b) => s + betProfit(b), 0);
+  const won = settled.filter(b => b.status === "won").length, lost = settled.filter(b => b.status === "lost").length, push = settled.filter(b => b.status === "push").length;
+  const pend = list.filter(b => b.status === "pending"), atRisk = pend.reduce((s, b) => s + b.stake, 0);
+  host.append(el("div", {class:"tiles"},
+    tile("Apuestas", String(list.length), `${pend.length} pendiente${pend.length === 1 ? "" : "s"} · ${money(atRisk)} en juego`),
+    tile("Récord", `${won}-${lost}` + (push ? `-${push}` : ""), decided.length ? `${fmtPct(won / decided.length)} de acierto` : "sin resultados todavía"),
+    tile("Ganancia neta", money(net), staked ? `sobre ${money(staked)} apostados` : ""),
+    tile("ROI", staked ? signed(net / staked * 100) + "%" : "—", "ganancia neta ÷ monto liquidado")));
+  // settle everything the data already answers
+  const ready = pend.map(b => [b, resolveBet(b)]).filter(([, r]) => r);
+  if (ready.length) { const sb = el("button", {type:"button", class:"btn", text:`Liquidar ${ready.length} apuesta(s) con resultado disponible`});
+    sb.addEventListener("click", async () => { sb.disabled = true; for (const [b, r] of ready) await updateBet(b.id, {status: r.status, result: r.txt}); });
+    host.append(el("div", {class:"btn-row"}, sb, el("span", {class:"sec-note", text:"Usa los marcadores y estadísticas de nflverse; revisa cada una y corrígela en la columna Estado si hace falta."}))); }
+  // cumulative profit chart over settled bets
+  if (settled.length >= 2) host.append(profitChart(settled));
+  // breakdowns
+  const group = (keyOf, label) => { const m = new Map(); for (const b of settled) { const k = keyOf(b); if (k == null) continue; const a = m.get(k) || {n:0, w:0, l:0, p:0, st:0, net:0}; a.n++; if (b.status === "won") a.w++; else if (b.status === "lost") a.l++; else if (b.status === "push") a.p++; if (b.status !== "void") a.st += b.stake; a.net += betProfit(b); m.set(k, a); }
+    if (!m.size) return null;
+    const t = el("table", {class:"splits"}); t.append(el("caption", {text: label}), el("thead", {}, el("tr", {}, ...["", "Liquidadas", "Récord", "Neto", "ROI"].map(h => el("th", {text: h})))),
+      el("tbody", {}, ...[...m].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([k, a]) => el("tr", {}, el("td", {text: k}), el("td", {text: a.n}), el("td", {text: `${a.w}-${a.l}` + (a.p ? `-${a.p}` : "")}),
+        el("td", {class: a.net > 0 ? "pos" : a.net < 0 ? "neg" : "", text: money(a.net)}), el("td", {text: a.st ? signed(a.net / a.st * 100) + "%" : "—"})))));
+    return el("div", {class:"tbl-wrap"}, t); };
+  const byKind = group(b => BET_KINDS[b.kind], "Por tipo de apuesta"), byGrade = group(b => b.kind === "prop" && b.grade ? "Matchup " + b.grade : null, "Props por letra de matchup (al registrarlas)");
+  if (byKind || byGrade) host.append(el("div", {class:"team-grid"}, byKind || el("div"), byGrade || el("div")));
+  // filter + table
+  const seg = el("div", {class:"seg", role:"group", "aria-label":"Filtrar apuestas"}, ...[["all", "Todas"], ["pending", "Pendientes"], ["settled", "Liquidadas"]].map(([v, t]) => {
+    const b = el("button", {type:"button", "aria-pressed": String(betFilter === v), text: t}); b.addEventListener("click", () => { betFilter = v; renderBets(); }); return b; }));
+  const csv = el("button", {type:"button", class:"btn ghost", text:"Copiar CSV"});
+  const csvMsg = el("span", {class:"sec-note", role:"status"});
+  csv.addEventListener("click", () => {
+    const rows = [["fecha_partido","partido","tipo","apuesta","cuota","monto","estado","resultado","ganancia","matchup","casa","notas"],
+      ...list.map(b => [b.date, `${b.away} @ ${b.home}`, BET_KINDS[b.kind], betLabel(b), b.odds, b.stake, BET_STATUS[b.status], b.result || "", betProfit(b).toFixed(2), b.grade || "", b.book || "", b.notes || ""])];
+    const txt = rows.map(r => r.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n");
+    Promise.resolve().then(() => navigator.clipboard.writeText(txt)).then(() => { csvMsg.textContent = "CSV copiado."; }, () => { csvMsg.textContent = "Tu navegador no permitió copiar."; });
+  });
+  host.append(el("div", {class:"btn-row"}, seg, csv, csvMsg));
+  const shown = list.filter(b => betFilter === "all" || (betFilter === "pending" ? b.status === "pending" : b.status !== "pending"));
+  const t = el("table", {class:"st bets-t"});
+  t.append(el("thead", {}, el("tr", {}, ...["Partido","Apuesta","Cuota","Monto","Matchup","Resultado","Estado","Ganancia",""].map(h => el("th", {text: h})))));
+  t.append(el("tbody", {}, ...shown.map(b => {
+    const r = b.status === "pending" ? resolveBet(b) : null, pr = betProfit(b);
+    const st = el("select", {"aria-label": "Estado de la apuesta"}, ...Object.entries(BET_STATUS).map(([v, l]) => el("option", {value: v, text: l})));
+    st.value = b.status; st.addEventListener("change", () => updateBet(b.id, {status: st.value}));
+    const del = el("button", {type:"button", class:"del", "aria-label": "Borrar apuesta", text: betDeleting === b.id ? "¿Borrar?" : "×"});
+    del.addEventListener("click", () => { if (betDeleting === b.id) { betDeleting = null; deleteBet(b.id); } else { betDeleting = b.id; renderBets(); } });
+    const day = b.date ? new Date(b.date + "T12:00:00").toLocaleDateString("es", {day:"numeric", month:"short"}) : "";
+    return el("tr", {},
+      el("td", {}, el("div", {class:"team-cell"}, teamMark(b.away), el("span", {text: `${b.away} @ ${b.home}`}), teamMark(b.home)), el("div", {class:"muted", text: `${day} · ${b.gtype === "REG" ? "S" + b.week : b.gtype}`})),
+      el("td", {}, el("div", {text: betLabel(b)}), el("div", {class:"muted", text: [BET_KINDS[b.kind], b.book, b.notes].filter(Boolean).join(" · ")})),
+      el("td", {text: oddsTxt(b.odds)}), el("td", {text: money(b.stake)}),
+      el("td", {}, b.grade ? el("span", {class:"pill " + gradeClass(b.grade[0]), text: b.grade}) : el("span", {class:"muted", text:"—"})),
+      el("td", {}, b.result ? el("span", {text: b.result}) : r ? el("span", {class:"muted", text: `${r.txt} → ${BET_STATUS[r.status]}`}) : el("span", {class:"muted", text: "por jugarse"})),
+      el("td", {}, st),
+      el("td", {class: pr > 0 ? "pos" : pr < 0 ? "neg" : "", text: b.status === "pending" ? `gana ${money(americanProfit(b.stake, b.odds))}` : money(pr)}),
+      el("td", {}, del)); })));
+  host.append(el("div", {class:"tbl-wrap"}, t));
+  fitTables();
+}
+// running profit after each settled bet, in game-date order
+function profitChart(settled) {
+  const pts = [...settled].sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.created || "").localeCompare(b.created || ""));
+  let acc = 0; const vals = pts.map(b => acc += betProfit(b));
+  const W = 640, H = 160, m = {t: 12, r: 12, b: 20, l: 52}, n = vals.length;
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), span = hi - lo || 1;
+  const X = i => m.l + (n === 1 ? 0 : i * (W - m.l - m.r) / (n - 1)), Y = v => m.t + (hi - v) / span * (H - m.t - m.b);
+  const NS = "http://www.w3.org/2000/svg", sv = (tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const svg = sv("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Ganancia acumulada: ${money(vals[n - 1])} tras ${n} apuestas liquidadas`});
+  svg.append(sv("line", {x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), stroke: "var(--ink-3)", "stroke-dasharray": "3 3"}));
+  for (const v of [hi, lo]) { const t = sv("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", fill: "var(--ink-3)", "font-size": "11"}); t.textContent = money(v); svg.append(t); }
+  svg.append(sv("path", {d: vals.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + "," + Y(v).toFixed(1)).join(""), fill: "none", stroke: "var(--s1)", "stroke-width": 2, "stroke-linejoin": "round"}));
+  const last = sv("circle", {cx: X(n - 1), cy: Y(vals[n - 1]), r: 4, fill: "var(--s1)", stroke: "var(--surface)", "stroke-width": 2});
+  svg.append(last);
+  pts.forEach((b, i) => { const c = sv("circle", {cx: X(i), cy: Y(vals[i]), r: 8, fill: "transparent"}); const tt = sv("title", {}); tt.textContent = `${betLabel(b)}: ${money(betProfit(b))} · acumulado ${money(vals[i])}`; c.append(tt); svg.append(c); });
+  return el("div", {class:"panel chart-card"}, el("h3", {text:"Ganancia acumulada"}), el("div", {class:"profit-plot"}, svg));
+}
+
+// ---- tabs
+function showTab(tab) {
+  const bets = tab === "bets";
+  $("view-board").hidden = bets; $("view-bets").hidden = !bets;
+  $("tab-board").setAttribute("aria-selected", String(!bets)); $("tab-bets").setAttribute("aria-selected", String(bets));
+  store.set("tab", tab);
+  if (bets) renderBets(); else fitTables();
+  window.scrollTo({top: 0});
+}
+
 // ---------- controls ----------
 const TRANSIENT = ["pline", "gspread", "gtotal", "ghome", "gwind", "gtemp", "gref"];
 function setState(p) {
@@ -1833,4 +2132,12 @@ $("filters-close").addEventListener("click", () => setFiltersOpen(false));
 const lp = new Date(lastPlayed + "T12:00:00");
 $("stamp").textContent = "Datos hasta el " + lp.toLocaleDateString("es", {day:"numeric", month:"long", year:"numeric"});
 render();
+// tabs and bets: the bet store connects in the background; the board never waits for it
+$("tab-board").addEventListener("click", () => showTab("board"));
+$("tab-bets").addEventListener("click", () => showTab("bets"));
+$("bet-form").addEventListener("submit", submitBetForm);
+$("bf-cancel").addEventListener("click", () => $("bet-dlg").close());
+$("bf-side").addEventListener("change", onBetSide);
+initBets();
+if (location.hash === "#apuestas" || store.get("tab") === "bets") showTab("bets");
 </script>
