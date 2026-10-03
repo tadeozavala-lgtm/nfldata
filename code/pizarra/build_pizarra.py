@@ -916,11 +916,14 @@ def build_game_picks(games, eff):
 
 
 # prop probability: logistic model on the player's over rate at the line (last 10 and last 20
-# games), the matchup letter and the team's implied total, one model per family of market
+# games), the matchup letter, the team's implied total and the injury report (share of the
+# team's targets or carries left by teammates who are out, main QB out, player questionable),
+# one model per family of market
 PROP_FAMILY = {"passing_yards": "y", "rushing_yards": "y", "receiving_yards": "y", "pass_rush": "y", "rush_rec": "y",
                "completions": "c", "attempts": "c", "carries": "c", "receptions": "c",
                "passing_tds": "t", "anytime_td": "t", "interceptions": "t"}
-PROP_CAL = [0.5, 0.55, 0.6, 0.65, 0.7]  # lower bounds of the calibration buckets (probability of the side picked)
+PROP_CAL = [0.5, 0.55, 0.6, 0.65, 0.7]
+VAC_BUCKETS = [0, 0.001, 0.15, 0.3]  # share of the team's targets or carries left by teammates who are out  # lower bounds of the calibration buckets (probability of the side picked)
 
 
 def prop_features(v10, v20, line, grade, implied):
@@ -931,16 +934,154 @@ def prop_features(v10, v20, line, grade, implied):
             1.0 if grade == "A" else 0.0, 1.0 if grade == "C" else 0.0, 0.0 if implied is None else (implied - 22) / 5]
 
 
+# ---------- injuries: who is out, and the volume they leave to their teammates ----------
+OUT_STATUSES = {"Out", "Doubtful", "IR", "PUP", "NA", "Sus", "COV"}  # won't play (Sleeper adds IR/PUP/NA/Sus)
+SLEEPER_TEAMS = {"LAR": "LA", "JAC": "JAX", "WSH": "WAS", "OAK": "LV", "SD": "LAC", "STL": "LA"}
+
+
+def load_injury_history(nfl, seasons):
+    """(season, week, team) -> {"out": gsis ids listed Out/Doubtful, "q": listed Questionable},
+    from nflverse's weekly injury reports."""
+    out = {}
+    for s in seasons:
+        try:
+            inj = nfl.load_injuries(s)
+        except Exception as e:  # the current season's file appears with its first report
+            print(f"No injury reports for {s}: {e}")
+            continue
+        for season, week, team, gsis, st in inj.select(["season", "week", "team", "gsis_id", "report_status"]).iter_rows():
+            if gsis and st in ("Out", "Doubtful", "Questionable"):
+                out.setdefault((season, week, team), {"out": set(), "q": set()})["q" if st == "Questionable" else "out"].add(gsis)
+    return out
+
+
+def load_sleeper(pdata, games):
+    """Current injury status from Sleeper's free players endpoint (no key; updated through the
+    week, including game-day downgrades and IR/PUP that weekly reports omit). Returns
+    {player index: [status, body part, practice, updated (ISO date)]}; players are matched by
+    gsis id, else by name and team. Sleeper asks for at most one call a day to this endpoint."""
+    import urllib.request
+    try:
+        req = urllib.request.Request("https://api.sleeper.app/v1/players/nfl", headers={"User-Agent": "pizarra-nfl"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            players = json.load(r)
+    except Exception as e:
+        print(f"No Sleeper statuses ({e})")
+        return {}
+    last = {}
+    for r in pdata["r"]:
+        if r[0] not in last or games[r[1]][3] >= games[last[r[0]][1]][3]:
+            last[r[0]] = r
+    by_gsis = {p[0]: i for i, p in enumerate(pdata["pl"])}
+    by_name = {}
+    for i, p in enumerate(pdata["pl"]):
+        if i in last:
+            by_name.setdefault((norm_name(p[1]), FRANCHISE.get(last[i][2], last[i][2])), []).append(i)
+    out = {}
+    for p in players.values():
+        st = p.get("injury_status")
+        if not st or p.get("position") not in POSITIONS or not p.get("team"):
+            continue
+        team = SLEEPER_TEAMS.get(p["team"], p["team"])
+        i = by_gsis.get(p.get("gsis_id") or "")
+        if i is None:
+            ids = by_name.get((norm_name(p.get("full_name") or ""), team), [])
+            i = ids[0] if len(ids) == 1 else None
+        if i is not None:
+            upd = p.get("news_updated")
+            out[i] = [st, p.get("injury_body_part"), p.get("practice_participation"),
+                      dt.datetime.fromtimestamp(upd / 1000, dt.timezone.utc).date().isoformat() if upd else None]
+    print(f"Sleeper: {len(out)} QB/RB/WR/TE with an injury status")
+    return out
+
+
+class TeamContext:
+    """What a game's injury list takes from a team: the share of its targets and of its RB
+    carries per game (over its previous 10 games) that belonged to teammates who won't play,
+    counting only regulars (3+ of the last 5 team games, so a long absence already shows in the
+    player's own games), and whether the main QB is out."""
+
+    def __init__(self, games, pdata):
+        self.games, self.pos, self.gsis = games, [p[2] for p in pdata["pl"]], [p[0] for p in pdata["pl"]]
+        self.ix = {c: 4 + i for i, c in enumerate(STAT_COLS)}
+        self.rows, tg = {}, {}
+        for r in pdata["r"]:
+            if games[r[1]][7] is not None:
+                tg.setdefault(r[2], set()).add(r[1])
+                self.rows.setdefault((r[2], r[1]), []).append(r)
+        self.tgames = {t: sorted(v, key=lambda gi: games[gi][3]) for t, v in tg.items()}
+        self.tdates = {t: [games[gi][3] for gi in v] for t, v in self.tgames.items()}
+        self.cache = {}
+
+    def mates(self, team, date):
+        """Previous team games and, per teammate, [games, targets, carries, attempts, games in the last 5]."""
+        key = (team, date)
+        if key not in self.cache:
+            i = bisect.bisect_left(self.tdates.get(team, []), date)
+            prev = self.tgames.get(team, [])[max(0, i - MATCH_WINDOW):i]
+            last5, ix, m = set(prev[-5:]), self.ix, {}
+            tt = tc = 0
+            for gi in prev:
+                for r in self.rows[(team, gi)]:
+                    x = m.setdefault(r[0], [0, 0, 0, 0, 0])
+                    x[0] += 1
+                    x[1] += r[ix["targets"]]
+                    x[2] += r[ix["carries"]]
+                    x[3] += r[ix["attempts"]]
+                    x[4] += gi in last5
+                    tt += r[ix["targets"]]
+                    tc += r[ix["carries"]] if self.pos[r[0]] == "RB" else 0
+            qb = max((k for k in m if self.pos[k] == "QB"), key=lambda k: (m[k][4], m[k][3]), default=None)
+            self.cache[key] = (len(prev), m, tt / len(prev) if prev else 0, tc / len(prev) if prev else 0, qb)
+        return self.cache[key]
+
+    def context(self, pi, team, date, out, q):
+        """[vacated target share, vacated carry share, main QB out, player questionable, who]."""
+        n, m, tt, tc, qb = self.mates(team, date)
+        if n < 4:
+            return None
+        vt = vc = 0.0
+        who = []
+        for k, x in m.items():
+            if k == pi or self.gsis[k] not in out or x[4] < 3:
+                continue
+            st, sc = (x[1] / x[0] / tt if tt and self.pos[k] != "QB" else 0), (x[2] / x[0] / tc if tc and self.pos[k] == "RB" else 0)
+            vt, vc = vt + st, vc + sc
+            if st or sc or k == qb:
+                who.append([k, round(st, 3), round(sc, 3)])
+        return [round(vt, 3), round(vc, 3), 1 if qb is not None and qb != pi and self.gsis[qb] in out else 0,
+                1 if self.gsis[pi] in q else 0, who]
+
+
+def vacated_for(market, pos, ctx):
+    """The vacated share that matters for a market: carries for rushing markets of a RB, both for
+    touchdowns, targets otherwise; the QB-out flag doesn't apply to the QB himself."""
+    vt, vc, qb_out, own_q = ctx[:4]
+    fam = PROP_FAMILY[market]
+    vac = vc if market in ("rushing_yards", "carries") or (market == "rush_rec" and pos == "RB") else vt + vc if fam == "t" else vt
+    return [vac, 0 if pos == "QB" else qb_out, own_q]
+
+
 class PropModel:
     """Fits P(over) for player props from every graded player-game since 2021. A player-game
     has no sportsbook line in the data, so each one is scored at three lines taken from the
     player's previous 10 games (20th, 50th and 80th percentile, rounded to .5; 0.5 and 1.5 for
-    touchdowns): the model learns how far a hit rate at a line carries forward. Calibration
-    is checked on the last two seasons with a model fit on the earlier ones."""
+    touchdowns): the model learns how far a hit rate at a line carries forward. The injury
+    features come from that week's official report. Calibration is checked on the last two
+    seasons with a model fit on the earlier ones."""
     key = "pm"
 
-    def __init__(self, games):
+    def __init__(self, games, pdata, injuries):
         self.games, self.rows, self.vals = games, [], {}
+        self.pos, self.inj, self.tc = [p[2] for p in pdata["pl"]], injuries, TeamContext(games, pdata)
+        self.ctx = {}
+
+    def _context(self, pi, r):
+        if (pi, r[1]) not in self.ctx:
+            g = self.games[r[1]]
+            rep = self.inj.get((g[0], g[2], r[2]), {"out": set(), "q": set()})
+            self.ctx[(pi, r[1])] = self.tc.context(pi, r[2], g[3], rep["out"], rep["q"]) or [0, 0, 0, 0, []]
+        return self.ctx[(pi, r[1])]
 
     def _values(self, r, f, m):
         k = (id(r), m)
@@ -958,30 +1099,71 @@ class PropModel:
         else:
             s = sorted(v10)
             lines = sorted({int(s[int(q * (len(s) - 1))]) + 0.5 for q in (0.2, 0.5, 0.8)})
+        extra = vacated_for(market, self.pos[pi], self._context(pi, r))
         for ln in lines:
-            self.rows.append((fam, self.games[r[1]][0], prop_features(v10, v20, ln, grade, implied), value > ln))
+            self.rows.append((fam, self.games[r[1]][0], prop_features(v10, v20, ln, grade, implied) + extra, value > ln))
 
     def summary(self):
         last = max(r[1] for r in self.rows)
         test_seasons = [last - 1, last]
         coef, cal = {}, [[0, 0.0, 0] for _ in PROP_CAL]
+        # injury check on the test seasons: over rate by share of volume left by teammates who are
+        # out, against the model with and without the injury features: [lines, overs, sum with, sum without]
+        vac = [[0, 0, 0.0, 0.0] for _ in VAC_BUCKETS]
+        sig = lambda x, w: 1 / (1 + math.exp(-sum(a * c for a, c in zip(x, w))))
         for fam in ("y", "c", "t"):
             rows = [r for r in self.rows if r[0] == fam]
             train = [r for r in rows if r[1] < test_seasons[0]]
             w = _logistic([r[2] for r in train], [float(r[3]) for r in train])
+            w0 = _logistic([r[2][:6] for r in train], [float(r[3]) for r in train])
             for r in rows:
                 if r[1] >= test_seasons[0]:
-                    p = 1 / (1 + math.exp(-sum(a * c for a, c in zip(r[2], w))))
+                    p = sig(r[2], w)
                     conf = max(p, 1 - p)
                     c = cal[max(i for i, lo in enumerate(PROP_CAL) if conf >= lo)]
                     c[0] += 1
                     c[1] += conf
                     c[2] += (p >= 0.5) == r[3]
+                    if fam != "t":
+                        v = vac[max(i for i, lo in enumerate(VAC_BUCKETS) if r[2][6] >= lo)]
+                        v[0] += 1
+                        v[1] += r[3]
+                        v[2] += p
+                        v[3] += sig(r[2][:6], w0)
             coef[fam] = [round(v, 4) for v in _logistic([r[2] for r in rows], [float(r[3]) for r in rows])]
         cal = [[n, round(sp / n, 4) if n else None, h] for n, sp, h in cal]
-        print(f"Prop model: {len(self.rows)} scored lines, coefficients {coef}, calibration {test_seasons}: {cal}")
+        vac = [[n, o, round(a / n, 4) if n else None, round(b / n, 4) if n else None] for n, o, a, b in vac]
+        print(f"Prop model: {len(self.rows)} scored lines, coefficients {coef}, calibration {test_seasons}: {cal}; vacated {vac}")
         self.rows, self.vals = [], {}
-        return {"coef": coef, "fam": PROP_FAMILY, "cal": cal, "calB": PROP_CAL, "test": test_seasons, "be": BREAK_EVEN}
+        return {"coef": coef, "fam": PROP_FAMILY, "cal": cal, "calB": PROP_CAL, "test": test_seasons, "be": BREAK_EVEN,
+                "vac": vac, "vacB": VAC_BUCKETS}
+
+    def current(self, pdata, status):
+        """Injury context for each player's next game from the current statuses
+        ({player: [status, ...]}): {player: [vacated targets, vacated carries, QB out, questionable, who]}."""
+        games, gsis = self.games, self.tc.gsis
+        out = {gsis[i] for i, x in status.items() if x[0] in OUT_STATUSES}
+        q = {gsis[i] for i, x in status.items() if x[0] == "Questionable"}
+        nxt = {}
+        for gi, g in enumerate(games):
+            if g[7] is None:
+                for t in (g[4], g[6]):
+                    if t not in nxt or g[3] < games[nxt[t]][3]:
+                        nxt[t] = gi
+        last = {}
+        for r in pdata["r"]:
+            if r[0] not in last or games[r[1]][3] >= games[last[r[0]][1]][3]:
+                last[r[0]] = r
+        res = {}
+        for pi, r in last.items():
+            gi = nxt.get(r[2])
+            if gi is None or games[r[1]][0] < self.tc.games[gi][0] - 1:
+                continue
+            c = self.tc.context(pi, r[2], games[gi][3], out, q)
+            if c and (c[0] or c[1] or c[2] or c[3]):
+                res[pi] = c
+        print(f"Injury context: {len(res)} players affected for their next game")
+        return res
 
 
 # ---------- sportsbook prop lines (The Odds API snapshot from fetch_odds.py) ----------
@@ -1068,6 +1250,7 @@ def main():
     ap.add_argument("--no-players", action="store_true",
                     help="skip all nflverse downloads: local CSVs only, no player/ranking/EPA sections")
     ap.add_argument("--odds", type=Path, help="prop lines snapshot from fetch_odds.py (optional)")
+    ap.add_argument("--no-sleeper", action="store_true", help="don't overlay Sleeper's current injury statuses")
     args = ap.parse_args()
 
     data, game_index = build_data(remote=not args.no_players)
@@ -1081,8 +1264,18 @@ def main():
     data["e"] = None if args.no_players else build_efficiency(game_index, detail)
     data["cov"] = None if args.no_players else build_coverage(game_index)
     data["logo"] = None if args.no_players else build_logos()
-    hooks = [h for h in (detail, PropModel(data["g"]) if data["p"] else None) if h]
+    props = None
+    if data["p"]:
+        import nflreadpy as nfl
+        # current statuses: the latest weekly report, overridden by Sleeper's fresher ones
+        if not args.no_sleeper:
+            for i, x in load_sleeper(data["p"], data["g"]).items():
+                data["p"]["inj"][i] = x + ["sleeper"]
+        props = PropModel(data["g"], data["p"], load_injury_history(nfl, range(PLAYER_FIRST_SEASON, data["p"]["cur"] + 1)))
+    hooks = [h for h in (detail, props) if h]
     data["mv"] = build_matchup_validation(data["g"], data["p"], hooks) if data["p"] else None
+    if props:
+        data["mv"]["pm"]["ctx"] = props.current(data["p"], data["p"]["inj"])
     data["gp"] = build_game_picks(data["g"], data["e"]) if data["e"] else None
     data["odds"] = build_odds(args.odds, data["g"], data["n"], data["p"]) if args.odds and data["p"] else None
     data["z"] = detail.page_data(data["p"]) if detail else None
