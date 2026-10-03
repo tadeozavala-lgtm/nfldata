@@ -200,6 +200,30 @@ details.bulk{margin-bottom:12px}
 .badge.starter{background:var(--accent-wash);color:var(--accent)}
 .ctx{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule-2);padding-top:12px}
 .ctx h3{font-size:19px;font-weight:600}
+/* field chart (pass zones / run gaps) */
+.fmap{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:10px;border:1px solid var(--rule);
+  background:repeating-linear-gradient(0deg,transparent 0 46px,var(--rule-2) 46px 47px),var(--surface-2)}
+.fmap-row{display:grid;gap:6px}
+.fmap-row.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.fmap-row.c5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.fmap-row.ol span{text-align:center;font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.04em}
+.fmap-depth{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.fz{min-width:0;display:flex;flex-direction:column;gap:3px;padding:8px;border-radius:6px;background:var(--surface);border:1px solid var(--rule)}
+.fz.good{background:linear-gradient(var(--good-wash),var(--good-wash)),var(--surface);border-color:var(--good)}
+.fz.bad{background:linear-gradient(var(--bad-wash),var(--bad-wash)),var(--surface);border-color:var(--bad)}
+.fz.dim{opacity:.6}
+.fz-name{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);overflow-wrap:break-word;hyphens:auto}
+.fz-share{font-family:var(--display);font-size:26px;font-weight:700;line-height:1}
+.fz-sub,.fz-opp{font-size:12px;color:var(--ink-2)}
+.fz-sub span+span::before,.fz-opp span+span::before{content:" · "}
+.fz-opp{border-top:1px solid var(--rule);padding-top:4px;color:var(--ink)}
+.fz-bar{height:4px;border-radius:2px;background:var(--accent);min-width:2px}
+.los{border-top:3px solid var(--s1);padding-top:2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--s1);text-align:center}
+@media (max-width:520px){.fz{padding:6px 5px}.fz-share{font-size:21px}.fmap{padding:8px}
+  .fz-sub span,.fz-opp span{display:block}.fz-sub span+span::before,.fz-opp span+span::before{content:none}
+  .fmap-row.c5{gap:3px}.fmap-row.c5 .fz{padding:5px 4px}
+  .fmap-row.c5 .fz-sub,.fmap-row.c5 .fz-opp{font-size:10.5px}
+  .fmap-row.c5 .fz-name{font-size:11px;letter-spacing:0;text-transform:none;overflow-wrap:normal}}
 .rk-t th.grp{text-align:center;color:var(--ink-2)}
 .rk-t td:nth-child(7),.rk-t tr:last-child th:nth-child(7){border-left:1px solid var(--rule)}
 .rk-t tr:first-child th:nth-child(4){border-left:1px solid var(--rule)}
@@ -1431,6 +1455,7 @@ function renderPlayerDetail() {
     el("div", {class:"tbl-wrap"}, expectedTable(p, mk)),
     el("p", {class:"chart-desc", text:"Esperado: lo que su volumen (envíos, acarreos, profundidad y zona del campo) produce en promedio según el modelo de oportunidad de ffverse. Si rinde muy por encima de lo esperado, tiende a regresar hacia abajo, y al revés."})));
   host.append(grid, matchupBlock(p, mk));
+  const zb = zoneBlock(p, mk); if (zb) host.append(zb);
   // recent game log
   const log = el("table", {class:"log"});
   const cols = p.pos === "QB" ? [["C/I", r => `${r.completions}/${r.attempts}`], ["Yds pase", r => r.passing_yards], ["TD", r => r.passing_tds], ["INT", r => r.passing_interceptions], ["Yds tierra", r => r.rushing_yards]]
@@ -1812,8 +1837,134 @@ function renderValidation() {
   tm.append(el("caption", {text:"Modificador por total implícito del equipo (todos los mercados menos intercepciones)"}),
     el("thead", {}, el("tr", {}, ...["Letra","− (≤ 18 pts)","Sin modificador","+ (≥ 25 pts)"].map(h => el("th", {text:h})))),
     el("tbody", {}, ...["A","B","C"].map(g => el("tr", {}, el("td", {text: g}), mc(g + "-"), mc(g), mc(g + "+")))));
-  host.append(el("div", {class:"team-grid"}, el("div", {class:"tbl-wrap"}, t), el("div", {class:"tbl-wrap"}, tm)),
-    el("p", {class:"chart-desc", text:"Cómo leerlo: los porcentajes absolutos quedan bajo 50% porque la línea sugerida redondea hacia arriba y muchos mercados tienen muchos ceros; lo que importa es la diferencia entre letras. La letra ayuda sobre todo en mercados de volumen del QB (completos, yardas de pase, intentos) y algo en recepciones y carrera; en TD casi no distingue. La parte de cobertura del modificador (CB, safeties y LB titulares, lesiones) no tiene histórico suficiente para validarla: tómala como contexto."}));
+  const zv = zoneValidation();
+  host.append(el("div", {class:"team-grid"}, el("div", {class:"tbl-wrap"}, t), el("div", {class:"tbl-wrap"}, tm), zv),
+    el("p", {class:"chart-desc", text:"Cómo leerlo: los porcentajes absolutos quedan bajo 50% porque la línea sugerida redondea hacia arriba y muchos mercados tienen muchos ceros; lo que importa es la diferencia entre letras. La letra ayuda sobre todo en mercados de volumen del QB (completos, yardas de pase, intentos) y algo en recepciones y carrera; en TD casi no distingue. La parte de cobertura del modificador (CB, safeties y LB titulares, lesiones) no tiene histórico suficiente para validarla: tómala como contexto."}),
+    zv ? el("p", {class:"chart-desc", text:"Encaje por zonas: cruza dónde recibe el jugador sus envíos o acarreos (profundidad y lado, o hueco de la línea) con las yardas que el rival permitió ahí a su posición. Dentro de cada letra, el porcentaje de over casi no cambia entre encaje bajo, normal y alto, así que se muestra en el mapa del campo como contexto y no altera la letra ni el modificador."}) : null);
+}
+
+// ---------- field chart: pass zones, run gaps and routes (D.z) ----------
+// From play-by-play: where a player gets his targets (depth x side) or carries (gap), over his
+// last 10 games, against what the next opponent allowed there to his position over its last 10.
+// Zone fit = yards per opportunity the defense allows in his zones / the league's in those zones.
+// The build backtests it (D.mv.zone); it does not move the matchup letter.
+const ZD = D.z;
+const ZONE_N = {rec: 6, qb: 6, run: 5};
+const ZONE_POS = {rec: ["RB", "WR", "TE"], run: ["RB"], qb: ["QB"]};
+const ZONE_MK = {receptions:"rec", receiving_yards:"rec", rush_rec:null, rushing_yards:"run", carries:"run",
+  passing_yards:"qb", completions:"qb", attempts:"qb", pass_rush:"qb"};
+const ZONE_DEFAULT = {QB:"qb", RB:"run", WR:"rec", TE:"rec"};
+const PASS_ZONE_ES = ["Corto · izquierda", "Corto · centro", "Corto · derecha", "Profundo · izquierda", "Profundo · centro", "Profundo · derecha"];
+const RUN_ZONE_ES = ["Por fuera izq.", "Off-tackle izq.", "Por dentro", "Off-tackle der.", "Por fuera der."];
+const ROUTE_ES = {"QUICK OUT":"Out rápido", "HITCH/CURL":"Hitch / curl", "GO":"Go (vertical)", "SCREEN":"Screen", "IN/DIG":"In / dig",
+  "POST":"Post", "CORNER":"Corner", "SLANT":"Slant", "SWING":"Swing", "WHEEL":"Wheel", "TEXAS/ANGLE":"Texas / angle",
+  "OUT":"Out", "CROSS":"Cruce", "FLAT":"Flat", "SHALLOW CROSS/DRAG":"Cruce corto / drag", "DEEP OUT":"Out profundo"};
+const zoneKind = (mk, pos) => { let k = ZONE_MK[mk]; if (k === undefined) return null; if (k === null) k = pos === "RB" ? "run" : "rec"; return ZONE_POS[k].includes(pos) ? k : null; };
+const zoneDef = ZD ? Object.fromEntries(Object.entries(ZD.d).map(([t, d]) => [fr(t), d])) : {};
+// per-zone view of a flat [n, c, y, ...] array
+const zcells = (arr, kind) => Array.from({length: ZONE_N[kind]}, (_, z) => arr ? {n: arr[3*z], c: arr[3*z+1], y: arr[3*z+2]} : {n: 0, c: 0, y: 0});
+function zoneFit(use, allowed, league, kind) {
+  const k = ZD.k[kind]; let num = 0, den = 0;
+  zcells(use, kind).forEach((u, z) => { const l = zcells(league, kind)[z], a = zcells(allowed, kind)[z];
+    if (!u.n || !l.n) return; const lr = l.y / l.n; num += u.n * (a.y + k * lr) / (a.n + k); den += u.n * lr; });
+  return den ? num / den : null;
+}
+let zoneView = null;  // RB: "run" or "rec" chosen with the toggle; null = follow the market
+function zoneBlock(p, mk) {
+  if (!ZD) return null;
+  const box = el("div", {class:"ctx"});
+  const kind = (zoneView && ZONE_POS[zoneView].includes(p.pos) ? zoneView : null) || zoneKind(mk, p.pos) || ZONE_DEFAULT[p.pos];
+  const head = el("div", {class:"panel-head"}, el("h3", {text:"Mapa del campo"}));
+  if (p.pos === "RB") {
+    const seg = el("div", {class:"seg", role:"group", "aria-label":"Vista del mapa"});
+    for (const [k, lbl] of [["run", "Acarreos por hueco"], ["rec", "Envíos por zona"]]) {
+      const b = el("button", {type:"button", "aria-pressed": String(k === kind), text: lbl});
+      b.addEventListener("click", () => { zoneView = k; box.replaceWith(zoneBlock(p, mk)); });
+      seg.append(b);
+    }
+    head.append(seg);
+  }
+  box.append(head);
+  const pz = ZD.pl[p.i], use = pz && pz[kind], key = `${p.pos}.${kind}`, league = ZD.lg[key];
+  if (!use || !league) { box.append(el("p", {class:"muted", text:"Sin jugadas registradas en sus últimos partidos para este mapa."})); return box; }
+  const ng = nextGame[fr(p.team)], opp = ng ? fr(oppIn(ng, fr(p.team))) : null, dd = opp && zoneDef[opp], allowed = dd && dd[key];
+  const U = zcells(use, kind), L = zcells(league, kind), A = zcells(allowed, kind), total = U.reduce((s, u) => s + u.n, 0);
+  const unit = kind === "run" ? ["acarreo", "acarreos"] : kind === "qb" ? ["intento", "intentos"] : ["envío", "envíos"];
+  const k = ZD.k[kind], maxShare = Math.max(...U.map(u => u.n)) / total;
+  const cell = (z, label) => {
+    const u = U[z], l = L[z], a = A[z], share = total ? u.n / total : 0, lr = l.n ? l.y / l.n : null;
+    const ratio = allowed && lr ? (a.y + k * lr) / (a.n + k) / lr : null;
+    const tone = ratio == null ? "" : ratio >= 1.08 ? " good" : ratio <= 0.92 ? " bad" : "";
+    return el("div", {class: "fz" + tone + (share < .05 ? " dim" : ""),
+      title: `${label}: ${p.nm} ${u.n} ${unit[1]}, ${u.c} ${kind === "run" ? "exitosos" : "completos"}, ${u.y} yds. ` +
+        (allowed ? `${name(opp)} permitió ${a.n} ${unit[1]} y ${a.y} yds a ${p.pos} en esta zona; liga ${fmtNum(lr)} yds por ${unit[0]}.` : "")},
+      el("div", {class:"fz-name", text: label}),
+      el("div", {class:"fz-share", text: Math.round(share * 100) + "%"}),
+      el("div", {class:"fz-sub"}, ...(u.n ? [el("span", {text: `${u.n} ${unit[u.n === 1 ? 0 : 1]}`}), el("span", {text: `${fmtNum(u.y / u.n)} yds`})] : [el("span", {text: "sin jugadas"})])),
+      el("div", {class:"fz-bar", style: `width:${maxShare ? Math.round(share / maxShare * 100) : 0}%`}),
+      el("div", {class:"fz-opp"}, allowed ? el("span", {text: `Rival ${a.n ? fmtNum(a.y / a.n) : "—"}`}) : null, el("span", {class:"muted", text: `Liga ${fmtNum(lr)}`})));
+  };
+  const field = el("div", {class:"fmap", role:"group", "aria-label": `Mapa del campo de ${p.nm}`});
+  if (kind === "run") {
+    field.append(el("div", {class:"fmap-row c5"}, ...RUN_ZONE_ES.map((lbl, z) => cell(z, lbl))),
+      el("div", {class:"los", text:"Línea de golpeo"}),
+      el("div", {class:"fmap-row c5 ol"}, ...["TE", "LT", "LG · C · RG", "RT", "TE"].map(t => el("span", {text: t}))));
+  } else {
+    field.append(el("div", {class:"fmap-depth", text:"Profundo (15+ yardas aéreas)"}),
+      el("div", {class:"fmap-row c3"}, ...[3, 4, 5].map(z => cell(z, PASS_ZONE_ES[z].split(" · ")[1]))),
+      el("div", {class:"fmap-depth", text:"Corto (menos de 15)"}),
+      el("div", {class:"fmap-row c3"}, ...[0, 1, 2].map(z => cell(z, PASS_ZONE_ES[z].split(" · ")[1]))),
+      el("div", {class:"los", text:"Línea de golpeo"}));
+  }
+  const what = kind === "run" ? "de sus acarreos diseñados" : kind === "qb" ? "de sus pases" : "de los envíos que recibe";
+  box.append(el("p", {class:"chart-desc", text: `Porcentaje ${what} por zona en sus últimos ${pz.g} partidos (izquierda y derecha vistas desde la ofensiva). ` +
+    (allowed ? `Abajo de cada zona: yardas por ${unit[0]} que permitió el rival (${name(opp)}) a ${p.pos} ahí en sus últimos ${dd.g} partidos, contra el promedio de la liga ${ZD.lgSeasons.join("–")}. Verde = permite más que la liga (favorable), rojo = permite menos; con pocas jugadas el color se acerca al promedio.` :
+      "Sin próximo rival: se muestra solo el promedio de la liga.")}), field);
+  if (kind === "run") {
+    const grp = [[2], [1, 3], [0, 4]].map(zs => zs.reduce((s, z) => ({n: s.n + U[z].n, an: s.an + A[z].n, ay: s.ay + A[z].y, ln: s.ln + L[z].n, ly: s.ly + L[z].y}), {n: 0, an: 0, ay: 0, ln: 0, ly: 0}));
+    box.append(el("p", {class:"chart-desc", text: ["Por dentro", "Off-tackle", "Por fuera"].map((lbl, i) => `${lbl} ${fmtPct(grp[i].n / total)}` +
+      (allowed && grp[i].an ? ` (rival ${fmtNum(grp[i].ay / grp[i].an)} yds por acarreo; liga ${fmtNum(grp[i].ly / grp[i].ln)})` : "")).join(" · ")}));
+  }
+  if (allowed) {
+    const f = zoneFit(use, allowed, league, kind), mu = matchupFor(p, mk);
+    const zt = MV && MV.zone && MV.zone.t[kind], g = mu && zt && zt[mu.grade];
+    const rate = t => g && g[t] && g[t][0] >= 30 ? `${fmtPct(g[t][1] / g[t][0])} (${g[t][0]})` : null;
+    const tier = f == null ? null : f >= MV?.zone?.hi ? "+" : f <= MV?.zone?.lo ? "-" : "0";
+    if (f != null) box.append(el("p", {class:"chart-desc"}, el("b", {text: `Encaje por zonas: ${fmtNum(f, 2)}. `}),
+      document.createTextNode(`En las zonas donde juega ${p.nm}, ${name(opp)} permite ${signed((f - 1) * 100, 0)}% yardas por ${unit[0]} respecto a la liga. ` +
+        (g && rate("+") && rate("-") ? `En la validación, con letra ${mu.grade} el jugador superó su línea sugerida el ${rate("+")} de las veces con encaje alto y el ${rate("-")} con encaje bajo` +
+          (tier && rate(tier) ? `; este partido cae en ${tier === "+" ? "encaje alto" : tier === "-" ? "encaje bajo" : "encaje normal"}` : "") +
+          ". La diferencia es pequeña, así que el encaje no cambia la letra: úsalo para entender el partido, no como señal." : "No cambia la letra de matchup: la validación no mostró que mejore el pronóstico."))));
+  }
+  if (kind === "rec") { const rt = routeTable(p); if (rt) box.append(rt); }
+  return box;
+}
+// targeted routes (FTN charting in nflverse's participation data): the latest season with data
+function routeTable(p) {
+  const R = ZD.rt, mine = R && R.pl[p.i]; if (!mine) return null;
+  const season = Math.max(...Object.keys(mine).map(Number)), list = mine[season], lg = R.lg[season] && R.lg[season][p.pos];
+  const total = list.reduce((s, r) => s + r[1], 0);
+  const t = el("table", {class:"splits"});
+  t.append(el("caption", {text: `Rutas a las que le lanzaron en ${season}`}),
+    el("thead", {}, el("tr", {}, ...["Ruta", "Envíos", "% de envíos", "Rec. %", "Yds/envío", `Liga ${p.pos}`].map(h => el("th", {text: h})))),
+    el("tbody", {}, ...list.slice().sort((a, b) => b[1] - a[1]).map(([ri, n, c, y]) => { const l = lg && lg[ri], nm = R.names[ri];
+      return el("tr", {}, el("td", {text: ROUTE_ES[nm] || nm.charAt(0) + nm.slice(1).toLowerCase()}), el("td", {text: n}), el("td", {text: fmtPct(n / total)}),
+        el("td", {text: fmtPct(c / n)}), el("td", {text: fmtNum(y / n)}), el("td", {class:"muted", text: l && l[0] ? fmtNum(l[2] / l[0]) : "—"})); })));
+  return el("div", {}, el("div", {class:"tbl-wrap"}, t),
+    el("p", {class:"chart-desc", text: `Solo cuentan las rutas de los pases que iban hacia él (el charting no registra las rutas sin envío). ` +
+      (season < CUR ? `nflverse todavía no publica el charting de rutas de ${CUR}; aparecerá aquí cuando lo haga. ` : "") +
+      "Liga: yardas por envío de todos los " + p.pos + " en esa ruta esa temporada."}));
+}
+// validation section: zone fit by grade
+function zoneValidation() {
+  const Z = MV && MV.zone; if (!Z || !Z.t.all) return null;
+  const t = el("table", {class:"splits"}), cellOf = c => el("td", {}, document.createTextNode(c ? fmtPct(c[1] / c[0]) + " " : "—"), el("span", {class:"muted", text: c ? `(${c[0]})` : ""}));
+  const sumTiers = d => { const o = {}; for (const g of Object.values(d)) for (const [k, c] of Object.entries(g)) { const x = o[k] ||= [0, 0]; x[0] += c[0]; x[1] += c[1]; } return o; };
+  const rows = [["A", Z.t.all.A], ["B", Z.t.all.B], ["C", Z.t.all.C], ["Receptores (envíos)", Z.t.rec && sumTiers(Z.t.rec)], ["RB (acarreos)", Z.t.run && sumTiers(Z.t.run)], ["QB (pases)", Z.t.qb && sumTiers(Z.t.qb)]];
+  t.append(el("caption", {text: "Encaje por zonas (contexto: no entra al modificador)"}),
+    el("thead", {}, el("tr", {}, ...["", `Bajo (≤ ${fmtNum(Z.lo, 2)})`, "Normal", `Alto (≥ ${fmtNum(Z.hi, 2)})`].map(h => el("th", {text: h})))),
+    el("tbody", {}, ...rows.filter(r => r[1]).map(([lbl, d]) => el("tr", {}, el("td", {text: lbl}), cellOf(d["-"]), cellOf(d["0"]), cellOf(d["+"])))));
+  return el("div", {class:"tbl-wrap"}, t);
 }
 
 // ---------- next game of the selected team: opponent, date, kickoff and venue ----------
