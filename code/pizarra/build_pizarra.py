@@ -10,9 +10,10 @@ and data/teamcolors.csv.
 
 Player data (weekly stats for QB/RB/WR/TE with snap share and expected
 production, the latest injury report and depth charts), per-game team
-passing/rushing yards and play-by-play efficiency (EPA, success rate, red
-zone, third downs, pass rate over expected) are downloaded from nflverse
-releases with nflreadpy (`pip install nflreadpy`). Without nflreadpy, or with
+passing/rushing yards, play-by-play efficiency (EPA, success rate, red zone,
+third downs, pass rate over expected), targets and carries by field zone and
+targeted routes are downloaded from nflverse releases with nflreadpy
+(`pip install nflreadpy`). Without nflreadpy, or with
 --no-players, the page is built offline from the local CSVs only, without
 those sections.
 
@@ -20,6 +21,7 @@ Usage:
     python3 code/pizarra/build_pizarra.py [-o OUTPUT] [--no-players]
 """
 import argparse
+import bisect
 import csv
 import json
 from pathlib import Path
@@ -257,10 +259,11 @@ def build_team_stats(game_index):
     return out
 
 
-def build_efficiency(game_index):
+def build_efficiency(game_index, on_season=None):
     """Per team-game efficiency from play-by-play: EPA and success on dropbacks and designed
     runs, third-down conversions, red-zone trips and touchdowns, and early-down neutral
-    pass rate over expected. Seasons are loaded one at a time to keep memory low."""
+    pass rate over expected. Seasons are loaded one at a time to keep memory low; each
+    season's plays are also handed to on_season(season, plays), if given."""
     try:
         import nflreadpy as nfl
         import polars as pl
@@ -277,6 +280,8 @@ def build_efficiency(game_index):
             print(f"No play-by-play for {season}: {e}")
             continue
         p = pbp.filter(pl.col("game_id").is_in(ids) & pl.col("posteam").is_not_null())
+        if on_season:
+            on_season(season, p)
         plays = p.filter(pl.col("play_type").is_in(["pass", "run"]) & pl.col("epa").is_not_null())
         if "two_point_attempt" in plays.columns:
             plays = plays.filter(pl.col("two_point_attempt").fill_null(0) == 0)
@@ -336,11 +341,12 @@ def grade_of(rank, n):
     return "A" if r >= 21 else "B" if r >= 11 else "C"
 
 
-def build_matchup_validation(games, pdata):
+def build_matchup_validation(games, pdata, zones=None):
     """Backtest of the matchup grade. For every player-game since 2021 the opponent is graded
     with only its previous MATCH_WINDOW games (no look-ahead), the line is the dashboard's
     suggested line (median of the player's previous 10 games, rounded to .5; 0.5 for TDs), and
-    we count how often the player went over, by grade, by market and by implied-total modifier."""
+    we count how often the player went over, by grade, by market and by implied-total modifier.
+    `zones` (a PlayDetail) also records each graded player-game for its zone-fit backtest."""
     rows, pos_of = pdata["r"], [p[2] for p in pdata["pl"]]
     n_stats = len(STAT_COLS)
     stat = lambda r: dict(zip(STAT_COLS, r[4:4 + n_stats]))
@@ -409,6 +415,8 @@ def build_matchup_validation(games, pdata):
                 med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
                 line = 0.5 if m == "anytime_td" else int(med) + 0.5
                 v = f(s)
+                if zones:
+                    zones.record(pi, prs[max(0, i - 10):i], r, m, grade, v > line)
                 for key in (m, "all"):
                     c = res.setdefault(key, {}).setdefault(grade, [0, 0, 0.0])
                     c[0] += 1
@@ -423,7 +431,10 @@ def build_matchup_validation(games, pdata):
             c[2] = round(c[2], 1)
     last = max(games[r[1]][0] for r in rows)
     print(f"Matchup validation: {res.get('all')}, modifier {mods}")
-    return {"res": res, "mod": mods, "from": PLAYER_FIRST_SEASON, "to": last, "window": MATCH_WINDOW}
+    out = {"res": res, "mod": mods, "from": PLAYER_FIRST_SEASON, "to": last, "window": MATCH_WINDOW}
+    if zones:
+        out["zone"] = zones.summary()
+    return out
 
 
 def build_logos():
@@ -539,6 +550,227 @@ def build_coverage(game_index):
     return {"slots": slots, "d": defenders, "man": man, "manSeason": man_season, "seasons": [current - 1, current]}
 
 
+# ---------- play detail for the field chart: pass zones, run gaps and routes ----------
+# pass zones from the offense's view: depth (short < 15 air yards, deep) x side (left, middle, right)
+PASS_ZONES = {("short", "left"): 0, ("short", "middle"): 1, ("short", "right"): 2,
+              ("deep", "left"): 3, ("deep", "middle"): 4, ("deep", "right"): 5}
+# designed-run gaps from the offense's view: outside left (end), off tackle left, inside the
+# tackles (guards and middle), off tackle right, outside right
+RUN_ZONES = {("left", "end"): 0, ("left", "tackle"): 1, ("left", "guard"): 2, ("middle", None): 2,
+             ("right", "guard"): 2, ("right", "tackle"): 3, ("right", "end"): 4}
+# kinds of opportunity: targets of a RB/WR/TE ("rec"), pass attempts of a QB ("qb"), RB carries ("run")
+ZONE_N = {"rec": 6, "qb": 6, "run": 5}
+ZONE_K = {"rec": 25, "qb": 40, "run": 30}  # opportunities of league average added to a defense's zone (shrinkage)
+ZONE_TIERS = (0.95, 1.05)  # zone fit below / above: "−" / "+" tier in the backtest
+ZONE_POS = {"rec": ("RB", "WR", "TE"), "run": ("RB",), "qb": ("QB",)}
+ZONE_MARKETS = {"receptions": "rec", "receiving_yards": "rec", "rush_rec": None, "rushing_yards": "run",
+                "carries": "run", "passing_yards": "qb", "completions": "qb", "attempts": "qb", "pass_rush": "qb"}
+
+
+def zone_kind(market, pos):
+    """Kind of opportunity a market depends on for a position, or None (no zone data)."""
+    k = ZONE_MARKETS.get(market, "-")
+    if k is None:
+        k = "run" if pos == "RB" else "rec"
+    return k if pos in ZONE_POS.get(k, ()) else None
+
+
+def zone_fit(use, allowed, league, kind):
+    """Yards per opportunity the defense allows in the zones the player uses, over what the
+    league allows in those same zones (1.10 = 10% more). Each zone of the defense is shrunk
+    toward the league's with ZONE_K opportunities. Arrays are flat [n, c, y] per zone."""
+    k, num, den = ZONE_K[kind], 0.0, 0.0
+    for z in range(ZONE_N[kind]):
+        w, ln = use[3 * z], league[3 * z]
+        if not w or not ln:
+            continue
+        lr = league[3 * z + 2] / ln
+        num += w * (allowed[3 * z + 2] + k * lr) / (allowed[3 * z] + k)
+        den += w * lr
+    return num / den if den else None
+
+
+class PlayDetail:
+    """Collects, from each season of play-by-play that build_efficiency loads, the targets of
+    every RB/WR/TE and pass attempts of every QB by pass zone, the designed runs of every RB by
+    gap, and (from the participation data's FTN charting) the route of every target. Gives the
+    page each player's zones over his last 10 games, what each defense allowed by zone to each
+    position over its last 10, league rates and route trees; and backtests the zone fit."""
+
+    def __init__(self, nfl, pl, games, pdata, game_index):
+        self.nfl, self.pl, self.games, self.gidx, self.current = nfl, pl, games, game_index, pdata["cur"]
+        self.pid = {p[0]: i for i, p in enumerate(pdata["pl"])}
+        self.pos = [p[2] for p in pdata["pl"]]
+        self.use = {}      # (pidx, gi, kind) -> flat [n, c, y] by zone
+        self.allowed = {}  # (gi, defense, "POS.kind") -> flat [n, c, y] by zone
+        self.routes = {}   # season -> {(pidx, route): [n, c, y]}
+        self.tiers = {}
+
+    def _add(self, gi, gsis, defteam, kind, z, n, c, y):
+        i = self.pid.get(gsis)
+        if i is None or self.pos[i] not in ZONE_POS[kind]:
+            return
+        for arr in (self.use.setdefault((i, gi, kind), [0] * 3 * ZONE_N[kind]),
+                    self.allowed.setdefault((gi, defteam, f"{self.pos[i]}.{kind}"), [0] * 3 * ZONE_N[kind])):
+            arr[3 * z] += n
+            arr[3 * z + 1] += c
+            arr[3 * z + 2] += y
+
+    def __call__(self, season, p):
+        if season < PLAYER_FIRST_SEASON - 1:  # one season before the backtest, for its first windows
+            return
+        pl, col = self.pl, self.pl.col
+        p = p.filter(col("two_point_attempt").fill_null(0) == 0) if "two_point_attempt" in p.columns else p
+        tg = p.filter((col("pass_attempt") == 1) & (col("sack").fill_null(0) == 0) & col("receiver_player_id").is_not_null()
+                      & col("pass_length").is_not_null() & col("pass_location").is_not_null())
+        keys = ["game_id", "defteam", "pass_length", "pass_location"]
+        stats = [pl.len().alias("n"), col("complete_pass").fill_null(0).sum().alias("c"),
+                 col("receiving_yards").fill_null(0).sum().alias("y")]
+        for who, kind in (("receiver_player_id", "rec"), ("passer_player_id", "qb")):
+            for r in tg.group_by(keys + [who]).agg(stats).iter_rows(named=True):
+                self._add(self.gidx[r["game_id"]], r[who], r["defteam"], kind,
+                          PASS_ZONES[(r["pass_length"], r["pass_location"])], r["n"], int(r["c"]), int(r["y"]))
+        runs = p.filter((col("rush_attempt") == 1) & (col("qb_scramble").fill_null(0) == 0)
+                        & col("rusher_player_id").is_not_null() & col("run_location").is_not_null())
+        agg = runs.group_by(["game_id", "defteam", "rusher_player_id", "run_location", "run_gap"]).agg(
+            pl.len().alias("n"), col("success").fill_null(0).sum().alias("c"), col("rushing_yards").fill_null(0).sum().alias("y"))
+        for r in agg.iter_rows(named=True):
+            z = RUN_ZONES.get((r["run_location"], None if r["run_location"] == "middle" else r["run_gap"]))
+            if z is not None:
+                self._add(self.gidx[r["game_id"]], r["rusher_player_id"], r["defteam"], "run", z, r["n"], int(r["c"]), int(r["y"]))
+        if season >= self.current - 3:
+            self._routes(season, tg)
+
+    def _routes(self, season, tg):
+        try:
+            part = self.nfl.load_participation(season)
+        except Exception as e:  # charting reaches nflverse after the season
+            print(f"No participation (routes) for {season}: {str(e)[:80]}")
+            return
+        if "route" not in part.columns:
+            return
+        pl, col = self.pl, self.pl.col
+        j = tg.join(part.select(col("nflverse_game_id").alias("game_id"), "play_id", "route"), on=["game_id", "play_id"])
+        j = j.filter(col("route").is_not_null() & (col("route") != ""))
+        agg = j.group_by(["receiver_player_id", "route"]).agg(
+            pl.len().alias("n"), col("complete_pass").fill_null(0).sum().alias("c"), col("receiving_yards").fill_null(0).sum().alias("y"))
+        out = self.routes.setdefault(season, {})
+        for gsis, route, n, c, y in agg.iter_rows():
+            i = self.pid.get(gsis)
+            if i is not None and self.pos[i] in ("RB", "WR", "TE"):
+                out[(i, route)] = [n, int(c), int(y)]
+
+    def _prepare(self):
+        """Defenses' games in date order, and league totals by position and kind."""
+        if hasattr(self, "dgames"):
+            return
+        games, dg = self.games, {}
+        for gi, t, _ in self.allowed:
+            dg.setdefault(t, set()).add(gi)
+        self.dgames = {t: sorted(g, key=lambda gi: games[gi][3]) for t, g in dg.items()}
+        self.ddates = {t: [games[gi][3] for gi in g] for t, g in self.dgames.items()}
+        self.league = {}
+        for (gi, t, key), arr in self.allowed.items():
+            acc = self.league.setdefault(key, [0] * len(arr))
+            for j, v in enumerate(arr):
+                acc[j] += v
+
+    @staticmethod
+    def _sum(arrays, size):
+        acc = [0] * size
+        for arr in arrays:
+            if arr:
+                for j, v in enumerate(arr):
+                    acc[j] += v
+        return acc
+
+    def fit_before(self, pi, prior_gis, defense, as_of, kind):
+        """Zone fit with only what was known before a game: the player's previous games and
+        the defense's previous MATCH_WINDOW games (at least MATCH_MIN)."""
+        self._prepare()
+        size = 3 * ZONE_N[kind]
+        use = self._sum([self.use.get((pi, gi, kind)) for gi in prior_gis], size)
+        if sum(use[0::3]) < 15:
+            return None
+        i = bisect.bisect_left(self.ddates.get(defense, []), as_of)
+        prev = self.dgames.get(defense, [])[max(0, i - MATCH_WINDOW):i]
+        if len(prev) < MATCH_MIN:
+            return None
+        key = f"{self.pos[pi]}.{kind}"
+        allowed = self._sum([self.allowed.get((gi, defense, key)) for gi in prev], size)
+        return zone_fit(use, allowed, self.league[key], kind)
+
+    def record(self, pi, prior, r, market, grade, over):
+        kind = zone_kind(market, self.pos[pi])
+        if not kind:
+            return
+        f = self.fit_before(pi, [x[1] for x in prior], r[3], self.games[r[1]][3], kind)
+        if f is None:
+            return
+        tier = "-" if f <= ZONE_TIERS[0] else "+" if f >= ZONE_TIERS[1] else "0"
+        for k in (kind, "all"):
+            c = self.tiers.setdefault(k, {}).setdefault(grade, {}).setdefault(tier, [0, 0])
+            c[0] += 1
+            c[1] += over
+
+    def summary(self):
+        return {"t": self.tiers, "lo": ZONE_TIERS[0], "hi": ZONE_TIERS[1]}
+
+    def page_data(self, pdata):
+        """What the page needs for the next game: each recent player's zones over his last 10
+        games, each defense's zones allowed over its last 10, league rates of the last two
+        seasons, and route trees of the latest seasons with charting."""
+        self._prepare()
+        games, recent = self.games, self.current - 1
+        played = {}
+        for r in pdata["r"]:
+            if games[r[1]][7] is not None:
+                played.setdefault(r[0], []).append(r[1])
+        players = {}
+        for pi, gis in played.items():
+            gis = sorted(gis, key=lambda gi: games[gi][3])[-MATCH_WINDOW:]
+            if games[gis[-1]][0] < recent:
+                continue
+            d = {"g": len(gis)}
+            for kind, n in ZONE_N.items():
+                arr = self._sum([self.use.get((pi, gi, kind)) for gi in gis], 3 * n)
+                if any(arr):
+                    d[kind] = arr
+            if len(d) > 1:
+                players[pi] = d
+        defenses = {}
+        for t, gis in self.dgames.items():
+            gis = [gi for gi in gis if games[gi][7] is not None][-MATCH_WINDOW:]
+            if not gis or games[gis[-1]][0] < recent:
+                continue
+            d = {"g": len(gis)}
+            for key in self.league:
+                d[key] = self._sum([self.allowed.get((gi, t, key)) for gi in gis], len(self.league[key]))
+            defenses[t] = d
+        league = {}
+        for (gi, t, key), arr in self.allowed.items():
+            if games[gi][0] >= recent:
+                acc = league.setdefault(key, [0] * len(arr))
+                for j, v in enumerate(arr):
+                    acc[j] += v
+        # routes: the latest two seasons with charting; league rates by position
+        seasons = sorted(self.routes)[-2:]
+        names = sorted({rt for s in seasons for _, rt in self.routes[s]})
+        rix = {rt: i for i, rt in enumerate(names)}
+        rp, rl = {}, {}
+        for s in seasons:
+            for (pi, rt), v in self.routes[s].items():
+                rp.setdefault(pi, {}).setdefault(s, []).append([rix[rt]] + v)
+                acc = rl.setdefault(s, {}).setdefault(self.pos[pi], [[0, 0, 0] for _ in names])[rix[rt]]
+                for j in range(3):
+                    acc[j] += v[j]
+        rp = {pi: v for pi, v in rp.items() if pi in players or any(s == seasons[-1] for s in v)}
+        print(f"Play detail: {len(players)} players and {len(defenses)} defenses with zones; "
+              f"routes for {seasons or 'no season'} ({len(rp)} players)")
+        return {"pl": players, "d": defenses, "lg": league, "lgSeasons": [recent, self.current],
+                "k": ZONE_K, "rt": {"s": seasons, "names": names, "pl": rp, "lg": rl}}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-o", "--output", type=Path, default=HERE / "pizarra-nfl.html")
@@ -549,10 +781,16 @@ def main():
     data, game_index = build_data(remote=not args.no_players)
     data["p"] = None if args.no_players else build_players(game_index)
     data["t"] = None if args.no_players else build_team_stats(game_index)
-    data["e"] = None if args.no_players else build_efficiency(game_index)
+    detail = None
+    if data["p"]:
+        import nflreadpy as nfl
+        import polars as pl
+        detail = PlayDetail(nfl, pl, data["g"], data["p"], game_index)
+    data["e"] = None if args.no_players else build_efficiency(game_index, detail)
     data["cov"] = None if args.no_players else build_coverage(game_index)
     data["logo"] = None if args.no_players else build_logos()
-    data["mv"] = build_matchup_validation(data["g"], data["p"]) if data["p"] else None
+    data["mv"] = build_matchup_validation(data["g"], data["p"], detail) if data["p"] else None
+    data["z"] = detail.page_data(data["p"]) if detail else None
     template = (HERE / "pizarra_template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     args.output.write_text(template.replace("__DATA__", payload), encoding="utf-8")
