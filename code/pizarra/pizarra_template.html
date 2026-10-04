@@ -272,6 +272,8 @@ dialog#bet-dlg::backdrop,dialog#parlay-dlg::backdrop{background:rgba(0,0,0,.45)}
 dialog#parlay-dlg{border:1px solid var(--rule);border-radius:10px;background:var(--surface);color:var(--ink);padding:18px;width:min(620px,calc(100vw - 32px));max-width:100%}
 .slip-bar{position:sticky;bottom:12px;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:8px 12px;box-shadow:0 4px 14px rgba(0,0,0,.12);order:99}
 .slip-bar b{font-family:var(--display);font-size:18px}
+.odds-fmt-row{display:flex;align-items:center;gap:8px}
+.odds-fmt button{padding:4px 10px;font-size:13px}
 .slip-legs{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px}
 .slip-legs li{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
 .slip-legs .muted{font-size:13px}
@@ -381,11 +383,12 @@ dialog#parlay-dlg{border:1px solid var(--rule);border-radius:10px;background:var
   <dialog id="bet-dlg" aria-labelledby="bet-dlg-title">
     <form id="bet-form" class="bet-form">
       <h3 id="bet-dlg-title">Registrar apuesta</h3>
+      <div class="odds-fmt-slot"></div>
       <p class="chart-desc" id="bf-desc"></p>
       <div class="prop-form">
         <div class="field"><label for="bf-side">Selección</label><select id="bf-side"></select></div>
         <div class="field narrow" id="bf-line-wrap"><label for="bf-line">Línea</label><input id="bf-line" type="number" step="0.5"></div>
-        <div class="field narrow"><label for="bf-odds">Cuota (americana)</label><input id="bf-odds" type="number" step="1" value="-110"></div>
+        <div class="field narrow"><label for="bf-odds" class="odds-lbl">Cuota (americana)</label><input id="bf-odds" class="odds-in" type="number" step="1" value="-110"></div>
         <div class="field narrow"><label for="bf-stake">Monto ($)</label><input id="bf-stake" type="number" step="1" min="0"></div>
       </div>
       <div class="prop-form">
@@ -400,10 +403,11 @@ dialog#parlay-dlg{border:1px solid var(--rule);border-radius:10px;background:var
   <dialog id="parlay-dlg" aria-labelledby="parlay-dlg-title">
     <form id="parlay-form" class="bet-form">
       <h3 id="parlay-dlg-title">Registrar parlay</h3>
+      <div class="odds-fmt-slot"></div>
       <p class="chart-desc">Todas las selecciones tienen que ganar. Una selección que termina en push o se anula sale del parlay y la cuota se recalcula sin ella.</p>
       <ol class="slip-legs" id="pf-legs"></ol>
       <div class="prop-form">
-        <div class="field narrow"><label for="pf-odds">Cuota del parlay</label><input id="pf-odds" type="number" step="1"></div>
+        <div class="field narrow"><label for="pf-odds" class="odds-lbl" data-pre="Cuota del parlay">Cuota del parlay (americana)</label><input id="pf-odds" class="odds-in" type="number" step="1"></div>
         <div class="field narrow"><label for="pf-stake">Monto ($)</label><input id="pf-stake" type="number" step="1" min="0"></div>
         <div class="field"><label for="pf-book">Casa de apuestas</label><input id="pf-book" type="text" list="" placeholder="Opcional" maxlength="40"></div>
       </div>
@@ -2095,7 +2099,39 @@ async function deleteBet(id) {
 const gameKey = g => ({season: g.season, week: g.week, gtype: g.type, date: g.date, away: fr(g.away), home: fr(g.home)});
 const findGame = b => games.find(g => g.season === b.season && g.week === b.week && g.type === b.gtype && fr(g.home) === b.home && fr(g.away) === b.away);
 const americanProfit = (stake, odds) => odds > 0 ? stake * odds / 100 : stake * 100 / Math.abs(odds);
-const oddsTxt = o => (o > 0 ? "+" : "−") + Math.abs(o);
+// odds are stored American (the books' US format); shown and typed as American or decimal per
+// the viewer's choice, kept in this browser
+let oddsFmt = store.get("oddsFmt") === "dec" ? "dec" : "us";
+const oddsTxt = o => oddsFmt === "dec" ? toDec(o).toFixed(2).replace(".", ",") : (o > 0 ? "+" : "−") + Math.abs(Math.round(o));
+const oddsInput = o => o == null || isNaN(o) ? "" : oddsFmt === "dec" ? toDec(o).toFixed(2) : String(Math.round(o));
+// typed value -> American (exact, not rounded, so a decimal price keeps its payout), or NaN
+function parseOdds(v) {
+  const x = parseFloat(String(v).replace(",", "."));
+  if (oddsFmt === "dec") return x > 1.005 ? (x >= 2 ? (x - 1) * 100 : -100 / (x - 1)) : NaN;
+  return Math.abs(x) >= 100 ? x : NaN;
+}
+const oddsHint = () => oddsFmt === "dec" ? "Escribe la cuota decimal, por ejemplo 1,91 o 2,50." : "Escribe la cuota americana, por ejemplo −110 o +150.";
+// switch format: convert the values in the open forms, relabel them and redraw the visible tab
+function setOddsFmt(f) {
+  if (f === oddsFmt) return;
+  const vals = [...document.querySelectorAll(".odds-in")].map(i => parseOdds(i.value));
+  oddsFmt = f; store.set("oddsFmt", f);
+  document.querySelectorAll(".odds-in").forEach((i, k) => { i.step = f === "dec" ? "0.01" : "1"; i.value = oddsInput(vals[k]); });
+  document.querySelectorAll(".odds-lbl").forEach(l => { l.textContent = `${l.dataset.pre || "Cuota"} (${f === "dec" ? "decimal" : "americana"})`; });
+  document.querySelectorAll(".odds-fmt button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.fmt === f)));
+  if ($("parlay-dlg").open) { renderParlayLegs(); updateParlayCalc(); }
+  renderSlipBar();
+  if (!$("view-bets").hidden) renderBets(); else if (!$("view-top").hidden) renderTop();
+}
+function oddsToggle() {
+  const seg = el("div", {class:"seg odds-fmt", role:"group", "aria-label":"Formato de cuota"});
+  for (const [f, t] of [["us", "Americana"], ["dec", "Decimal"]]) {
+    const b = el("button", {type:"button", "data-fmt": f, "aria-pressed": String(oddsFmt === f), text: t});
+    b.addEventListener("click", () => setOddsFmt(f));
+    seg.append(b);
+  }
+  return el("div", {class:"odds-fmt-row"}, el("span", {class:"sec-note", text:"Cuotas:"}), seg);
+}
 const money = v => (v < 0 ? "−$" : "$") + Math.abs(v).toFixed(2);
 // parlays: decimal odds multiply; legs that push or are voided drop out of the price
 const toDec = o => o > 0 ? 1 + o / 100 : 1 + 100 / Math.abs(o);
@@ -2105,7 +2141,7 @@ function parlayDec(b) {
   const legs = b.legs || [], gone = legs.filter((l, i) => b.legStatus && (b.legStatus[i] === "push" || b.legStatus[i] === "void"));
   if (!gone.length) return toDec(b.odds);
   // priced as the product of the legs: drop the dead ones exactly; a book's own parlay price: scale it
-  return b.odds === toAmerican(legsDec(legs)) ? legsDec(legs.filter(l => !gone.includes(l))) : toDec(b.odds) / legsDec(gone);
+  return Math.abs(toDec(b.odds) - legsDec(legs)) < 0.005 ? legsDec(legs.filter(l => !gone.includes(l))) : toDec(b.odds) / legsDec(gone);
 }
 const winAmount = b => b.kind === "parlay" ? b.stake * (parlayDec(b) - 1) : americanProfit(b.stake, b.odds);
 const betProfit = b => b.status === "won" ? winAmount(b) : b.status === "lost" ? -b.stake : 0;
@@ -2158,7 +2194,7 @@ function openBetForm(d) {
   d.lastPick = sideSel.value;
   lineIn.value = d.line ?? ""; lineIn.disabled = d.kind === "ml";
   $("bf-line-wrap").hidden = d.kind === "ml";
-  $("bf-odds").value = d.odds ?? -110; $("bf-stake").value = store.get("lastStake") || 10;
+  $("bf-odds").value = oddsInput(d.odds ?? -110); $("bf-stake").value = store.get("lastStake") || 10;
   $("bf-book").value = d.book || store.get("lastBook") || ""; $("bf-notes").value = ""; $("bf-msg").textContent = "";
   if (Bets.mode === "pending") $("bf-msg").textContent = "Conectando con tu almacenamiento…";
   dlg.showModal();
@@ -2173,8 +2209,8 @@ function onBetSide() {
 // the selection in the dialog (game, side, line, price), or null with the reason shown
 function readLeg() {
   const d = betDraft, msg = $("bf-msg"); if (!d) return null;
-  const odds = parseFloat($("bf-odds").value), line = parseFloat($("bf-line").value);
-  if (!(Math.abs(odds) >= 100)) { msg.textContent = "Escribe la cuota americana, por ejemplo −110 o +150."; return null; }
+  const odds = parseOdds($("bf-odds").value), line = parseFloat($("bf-line").value);
+  if (isNaN(odds)) { msg.textContent = oddsHint(); return null; }
   if (d.kind !== "ml" && isNaN(line)) { msg.textContent = "Escribe la línea."; return null; }
   const leg = {kind: d.kind, ...gameKey(d.game), pick: $("bf-side").value, line: d.kind === "ml" ? null : line, odds};
   if (d.kind === "prop") Object.assign(leg, {pid: d.pid, pname: d.pname, pos: d.pos, team: d.team, market: d.market, grade: d.grade || ""});
@@ -2230,7 +2266,7 @@ function renderSlipBar() {
 }
 function openParlay() {
   renderParlayLegs();
-  $("pf-odds").value = slip.length > 1 ? toAmerican(legsDec(slip)) : "";
+  $("pf-odds").value = slip.length > 1 ? oddsInput(toAmerican(legsDec(slip))) : "";
   $("pf-stake").value = store.get("lastStake") || 10; $("pf-book").value = store.get("lastBook") || "";
   $("pf-notes").value = ""; $("pf-msg").textContent = "";
   updateParlayCalc();
@@ -2242,22 +2278,22 @@ function renderParlayLegs() {
     del.addEventListener("click", () => {
       setSlip(slip.filter((_, k) => k !== i));
       if (!slip.length) { $("parlay-dlg").close(); return; }
-      renderParlayLegs(); $("pf-odds").value = slip.length > 1 ? toAmerican(legsDec(slip)) : ""; updateParlayCalc();
+      renderParlayLegs(); $("pf-odds").value = slip.length > 1 ? oddsInput(toAmerican(legsDec(slip))) : ""; updateParlayCalc();
     });
     return el("li", {}, el("span", {text: betLabel(l)}), el("span", {class:"muted", text: `${l.away} @ ${l.home} · ${oddsTxt(l.odds)}`}), del);
   }));
 }
 function updateParlayCalc() {
-  const auto = slip.length > 1 ? toAmerican(legsDec(slip)) : null, odds = parseFloat($("pf-odds").value), stake = parseFloat($("pf-stake").value);
+  const auto = slip.length > 1 ? toAmerican(legsDec(slip)) : null, odds = parseOdds($("pf-odds").value), stake = parseFloat($("pf-stake").value);
   $("pf-calc").textContent = slip.length < 2 ? "Agrega al menos otra selección: en la pizarra o en el Top 5, “Apostar” y luego “Agregar al parlay”." :
-    `Cuota calculada con las selecciones: ${oddsTxt(auto)}` + (Math.abs(odds) >= 100 && stake > 0 ? ` · con ${money(stake)} ganarías ${money(stake * (toDec(odds) - 1))}` : "") +
-    (Math.abs(odds) >= 100 && odds !== auto ? ". Usas la cuota de tu casa (en parlays del mismo partido suele ser distinta)." : ".");
+    `Cuota calculada con las selecciones: ${oddsTxt(auto)}` + (!isNaN(odds) && stake > 0 ? ` · con ${money(stake)} ganarías ${money(stake * (toDec(odds) - 1))}` : "") +
+    (!isNaN(odds) && Math.abs(toDec(odds) - legsDec(slip)) >= 0.005 ? ". Usas la cuota de tu casa (en parlays del mismo partido suele ser distinta)." : ".");
 }
 async function submitParlay(e) {
   e.preventDefault();
-  const msg = $("pf-msg"), odds = parseFloat($("pf-odds").value), stake = parseFloat($("pf-stake").value);
+  const msg = $("pf-msg"), odds = parseOdds($("pf-odds").value), stake = parseFloat($("pf-stake").value);
   if (slip.length < 2) { msg.textContent = "Un parlay necesita al menos dos selecciones."; return; }
-  if (!(Math.abs(odds) >= 100)) { msg.textContent = "Escribe la cuota americana del parlay, por ejemplo +264."; return; }
+  if (isNaN(odds)) { msg.textContent = oddsHint(); return; }
   if (!(stake > 0)) { msg.textContent = "Escribe el monto apostado."; return; }
   if (Bets.mode === "pending") { msg.textContent = "Todavía conectando con tu almacenamiento; intenta en un segundo."; return; }
   const first = [...slip].sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -2275,7 +2311,7 @@ function renderBets() {
   const host = $("view-bets"); host.replaceChildren();
   const head = el("div", {class:"sec-head"}, el("h2", {text:"Mis apuestas"}),
     el("span", {class:"sec-note", text: Bets.mode === "db" ? "Guardadas en tu cuenta de forma privada: solo tú las ves." :
-      Bets.mode === "local" ? "Guardadas solo en este navegador: si lo limpias o cambias de dispositivo, se pierden. Usa “Copiar CSV” como respaldo." : "Conectando con tu almacenamiento…"}));
+      Bets.mode === "local" ? "Guardadas solo en este navegador: si lo limpias o cambias de dispositivo, se pierden. Usa “Copiar CSV” como respaldo." : "Conectando con tu almacenamiento…"}), oddsToggle());
   host.append(head);
   if (Bets.error) host.append(el("p", {class:"form-msg", role:"status", text: typeof Bets.error === "string" && Bets.error.length > 20 ? Bets.error : "Hubo un problema con el almacenamiento de apuestas."}));
   const list = [...Bets.list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || "").localeCompare(a.created || ""));
@@ -2319,8 +2355,8 @@ function renderBets() {
   const csv = el("button", {type:"button", class:"btn ghost", text:"Copiar CSV"});
   const csvMsg = el("span", {class:"sec-note", role:"status"});
   csv.addEventListener("click", () => {
-    const rows = [["fecha_partido","partido","tipo","apuesta","cuota","monto","estado","resultado","ganancia","matchup","casa","notas"],
-      ...list.map(b => [b.date, b.kind === "parlay" ? b.legs.map(l => `${l.away} @ ${l.home}`).join("; ") : `${b.away} @ ${b.home}`, BET_KINDS[b.kind], betLabel(b), b.odds, b.stake, BET_STATUS[b.status], b.result || "", betProfit(b).toFixed(2), b.grade || "", b.book || "", b.notes || ""])];
+    const rows = [["fecha_partido","partido","tipo","apuesta","cuota_americana","cuota_decimal","monto","estado","resultado","ganancia","matchup","casa","notas"],
+      ...list.map(b => [b.date, b.kind === "parlay" ? b.legs.map(l => `${l.away} @ ${l.home}`).join("; ") : `${b.away} @ ${b.home}`, BET_KINDS[b.kind], betLabel(b), Math.round(b.odds), toDec(b.odds).toFixed(2), b.stake, BET_STATUS[b.status], b.result || "", betProfit(b).toFixed(2), b.grade || "", b.book || "", b.notes || ""])];
     const txt = rows.map(r => r.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n");
     Promise.resolve().then(() => navigator.clipboard.writeText(txt)).then(() => { csvMsg.textContent = "CSV copiado."; }, () => { csvMsg.textContent = "Tu navegador no permitió copiar."; });
   });
@@ -2539,7 +2575,7 @@ function renderTopReview() {
 function renderTop() {
   const host = $("view-top"); host.replaceChildren();
   host.append(el("div", {class:"panel-head"}, el("h2", {text:"Top 5 de la semana"}),
-    el("span", {class:"sec-note", text:`A momio −110 hay que acertar ${beTxt()} para no perder. “Supera” = la probabilidad histórica de ese tipo de pick pasa ese umbral.`})));
+    el("span", {class:"sec-note", text:`A momio ${oddsTxt(-110)} hay que acertar ${beTxt()} para no perder. “Supera” = la probabilidad histórica de ese tipo de pick pasa ese umbral.`}), oddsToggle()));
   // games
   const gs = el("section", {class:"panel"});
   gs.append(el("h3", {text:"Partidos: spread y over/under"}));
@@ -2675,6 +2711,8 @@ $("tab-bets").addEventListener("click", () => showTab("bets"));
 $("bet-form").addEventListener("submit", submitBetForm);
 $("bf-cancel").addEventListener("click", () => $("bet-dlg").close());
 $("bf-leg").addEventListener("click", addLeg);
+document.querySelectorAll(".odds-fmt-slot").forEach(s => s.replaceWith(oddsToggle()));
+if (oddsFmt === "dec") { const f = oddsFmt; oddsFmt = "us"; setOddsFmt(f); }
 $("parlay-form").addEventListener("submit", submitParlay);
 $("pf-more").addEventListener("click", () => $("parlay-dlg").close());
 $("pf-clear").addEventListener("click", () => { setSlip([]); $("parlay-dlg").close(); });
