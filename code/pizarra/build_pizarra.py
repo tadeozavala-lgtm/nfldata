@@ -1381,6 +1381,23 @@ def build_top5(data, board):
     return out
 
 
+def kickoff_utc(g):
+    """Kickoff as an aware UTC datetime: gameday plus the Eastern kickoff time (kept for the latest
+    season; 13:00 otherwise), with US daylight time from the second Sunday of March to the first
+    Sunday of November."""
+    day = dt.date.fromisoformat(g[3])
+    hh, mm = map(int, (g[19] if len(g) > 19 and g[19] else "13:00").split(":")[:2])
+    sunday = lambda y, m, n: [d for d in (dt.date(y, m, k) for k in range(1, 15)) if d.weekday() == 6][n - 1]
+    dst = sunday(day.year, 3, 2) <= day < sunday(day.year, 11, 1)
+    return dt.datetime(day.year, day.month, day.day, hh, mm, tzinfo=dt.timezone.utc) + dt.timedelta(hours=4 if dst else 5)
+
+
+def week_kickoff(games, week):
+    """First kickoff of a week (season, type, week), or None."""
+    ks = [kickoff_utc(g) for g in games if [g[0], g[1], g[2]] == list(week)]
+    return min(ks) if ks else None
+
+
 def find_game(games, key):
     for gi, g in enumerate(games):
         if g[0] == key[0] and g[1] == key[1] and g[2] == key[2] and FRANCHISE.get(g[4], g[4]) == key[3] and FRANCHISE.get(g[6], g[6]) == key[4]:
@@ -1513,13 +1530,21 @@ def build_top5_section(data, picks_dir, freeze):
     games, pdata = data["g"], data["p"]
     board = Board(games, pdata)
     frozen = load_frozen(picks_dir)
+    # a freeze only counts if it was made before the week's first kickoff
+    for wk in list(frozen):
+        first = week_kickoff(games, wk)
+        made = frozen[wk].get("made")
+        if not made or not first or dt.datetime.strptime(made, "%Y-%m-%dT%H:%MZ").replace(tzinfo=dt.timezone.utc) >= first:
+            print(f"Ignoring frozen picks for {wk}: made {made}, after the first kickoff {first}")
+            del frozen[wk]
     top = build_top5(data, board)
+    now = dt.datetime.now(dt.timezone.utc)
     if top:
         wk = tuple(top["week"])
         if wk in frozen:
             top = frozen[wk]
             top["frozen"] = True
-        elif freeze and picks_dir and top["props"]:
+        elif freeze and picks_dir and top["props"] and now < (week_kickoff(games, wk) or now):
             top["made"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
             picks_dir.mkdir(parents=True, exist_ok=True)
             (picks_dir / week_file(wk)).write_text(json.dumps(top, ensure_ascii=False, indent=1), encoding="utf-8")
