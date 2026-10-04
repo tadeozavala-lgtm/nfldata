@@ -245,6 +245,10 @@ button.sort.on{color:var(--ink);text-decoration:underline;text-underline-offset:
 @media (max-width:520px){.tabs button{font-size:16px;padding:8px 9px}}
 .top-t td{vertical-align:top}
 .vac-note{font-size:12px;color:var(--good);white-space:normal;max-width:34ch}
+.review-t td.why{text-align:left;white-space:normal;min-width:28ch;max-width:70ch;color:var(--ink-2)}
+.review-t td:first-child{white-space:normal;max-width:30ch}
+.review-t td.why{grid-column:1 / -1}
+.review-t th:last-child{text-align:left}
 .top-t td div.muted{white-space:normal;max-width:24ch;margin-left:auto}
 .top-t td:first-child div.muted,.top-t td:nth-child(2) div.muted{margin-left:0}
 #view-top .team-grid{grid-template-columns:1fr}
@@ -2474,6 +2478,64 @@ function labelCells(t) {
 function statusPill(prob, be = BE, txt = "Supera " + beTxt()) {
   return prob >= be ? el("span", {class:"pill w", text: txt}) : el("span", {class:"pill p", text:"Sin ventaja"});
 }
+
+// ---- Top 5 from the build (D.t5): this week's picks, frozen on the first build with sportsbook
+// lines so they can be graded, and the review of the latest finished frozen week
+const T5 = D.t5;
+const gameByKey = k => games.find(g => g.season === k[0] && g.type === k[1] && g.week === k[2] && fr(g.away) === k[3] && fr(g.home) === k[4]);
+function t5Games() {
+  return ((T5 && T5.top && T5.top.games) || []).map(c => {
+    const g = gameByKey(c.game); if (!g) return null;
+    const H = fr(g.home), A = fr(g.away);
+    return {kind: c.kind, g, pick: c.pick, line: c.line, edge: c.edge, p: c.prob, n: c.n,
+      label: c.kind === "spread" ? `${c.pick} ${lineTxt(c.line)}` : `${c.pick === "over" ? "Over" : "Under"} ${String(c.line).replace(".", ",")}`,
+      model: c.kind === "spread" ? (c.model >= 0 ? `${H} por ${fmtNum(c.model)}` : `${A} por ${fmtNum(-c.model)}`) : `${fmtNum(c.model)} puntos`,
+      market: c.kind === "spread" ? (g.spread >= 0 ? `${H} por ${fmtNum(g.spread)}` : `${A} por ${fmtNum(-g.spread)}`) : `${String(g.total).replace(".", ",")} puntos`, why: ""};
+  }).filter(Boolean);
+}
+function t5Props() {
+  return ((T5 && T5.top && T5.top.props) || []).map(c => {
+    const p = playerById[c.pid], ng = gameByKey(c.game); if (!p || !ng) return null;
+    const over = c.pick === "over";
+    return {p, mk: c.market, line: c.line, pick: c.pick, price: c.odds, book: c.book, nb: c.books, prob: c.prob, model: c.model, market: c.market_p,
+      be: c.be, edge: c.edge, review: c.review, outNow: c.outNow, ng, ctx: PM && PM.ctx && PM.ctx[p.i], vac: c.vac,
+      o10: over ? c.o10 : c.n10 - c.o10, n10: c.n10, o20: over ? c.o20 : c.n20 - c.o20, n20: c.n20};
+  }).filter(Boolean);
+}
+const frozenTxt = () => T5 && T5.top && T5.top.frozen ? `Picks congelados${T5.top.made ? " el " + new Date(T5.top.made).toLocaleString("es", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : ""}: son los que se califican al terminar la semana, aunque después cambien las líneas o las lesiones. ` : "";
+const RES_PILL = {won: ["w", "OK"], lost: ["l", "NOK"], push: ["p", "Push"], void: ["p", "Anulada"], pending: ["p", "Pendiente"]};
+const weekTxt = w => w[1] === "REG" ? `semana ${w[2]} de ${w[0]}` : `${ROUND_ES[w[1]] || w[1]} ${w[0]}`;
+function renderTopReview() {
+  const box = el("section", {class:"panel"});
+  box.append(el("h3", {text:"Análisis Top 5 semana pasada"}));
+  const R = T5 && T5.review;
+  if (!R) {
+    box.append(el("p", {class:"chart-desc", text: T5 && T5.top && T5.top.frozen ? `Todavía no termina ninguna semana con picks congelados. Los de esta ${weekTxt(T5.top.week)} se califican cuando se jueguen todos sus partidos y el análisis aparece aquí.` :
+      "Todavía no hay picks congelados: se congelan con la primera descarga de líneas de la semana (jueves) y se analizan al terminar la semana."}));
+    return box;
+  }
+  const all = [...R.games.map(c => ({...c, side: "g"})), ...R.props.map(c => ({...c, side: "p"}))];
+  const count = side => { const xs = all.filter(c => c.side === side); return `${xs.filter(c => c.status === "won").length}-${xs.filter(c => c.status === "lost").length}` + (xs.some(c => c.status === "push") ? `-${xs.filter(c => c.status === "push").length}` : ""); };
+  const fails = {}; for (const c of all) if (c.status === "lost") fails[c.cause] = (fails[c.cause] || 0) + 1;
+  box.append(el("p", {class:"chart-desc", text: `${weekTxt(R.week)[0].toUpperCase() + weekTxt(R.week).slice(1)}: partidos ${count("g")}, props ${count("p")}.` +
+    (Object.keys(fails).length ? " Fallas por causa: " + Object.entries(fails).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} (${n})`).join(", ") + "." : " Sin fallas.") +
+    " Se reemplaza cada semana por la más reciente."}));
+  const t = el("table", {class:"splits top-t review-t"});
+  t.append(el("thead", {}, el("tr", {}, ...["Pick", "Resultado", "Análisis"].map(h => el("th", {text: h})))),
+    el("tbody", {}, ...all.map(c => {
+      const [cls, txt] = RES_PILL[c.status] || RES_PILL.pending;
+      const what = c.side === "g" ? `${c.game[3]} @ ${c.game[4]} · ${c.kind === "spread" ? `${c.pick} ${lineTxt(c.line)}` : `${c.pick === "over" ? "Over" : "Under"} ${String(c.line).replace(".", ",")}`}`
+        : `${c.pname} · ${MK[c.market] ? MK[c.market].name : c.market} · ${c.pick === "over" ? "Over" : "Under"} ${String(c.line).replace(".", ",")} (${oddsTxt(c.odds)})`;
+      return el("tr", {}, el("td", {}, el("b", {text: what}), el("div", {class:"muted", text: `prob. ${fmtPct(c.prob)}`})),
+        el("td", {}, el("span", {class:"pill " + cls, text: txt})), el("td", {class:"why", text: c.why}));
+    })));
+  box.append(el("div", {class:"tbl-wrap"}, labelCells(t)));
+  // running record of every frozen week: hit rate against the probabilities the picks carried
+  const rec = T5.record, line = (lbl, r) => { const n = r[0] + r[1]; return n ? `${lbl} ${r[0]}-${r[1]}${r[2] ? "-" + r[2] : ""} (${fmtPct(r[0] / n)} de acierto; esperado ${fmtPct(r[4] / n)}; ${signed(r[3], 2)} unidades)` : null; };
+  const parts = [line("partidos", rec.games), line("props", rec.props)].filter(Boolean);
+  if (parts.length) box.append(el("p", {class:"chart-desc", text: `Acumulado de ${T5.weeks} semana${T5.weeks === 1 ? "" : "s"} congelada${T5.weeks === 1 ? "" : "s"}: ${parts.join(" · ")}. Si el acierto real se queda por debajo del esperado semana tras semana, el modelo está sobreestimando y hay que recalibrarlo; con pocas semanas la diferencia es ruido.`}));
+  return box;
+}
 function renderTop() {
   const host = $("view-top"); host.replaceChildren();
   host.append(el("div", {class:"panel-head"}, el("h2", {text:"Top 5 de la semana"}),
@@ -2481,12 +2543,12 @@ function renderTop() {
   // games
   const gs = el("section", {class:"panel"});
   gs.append(el("h3", {text:"Partidos: spread y over/under"}));
-  const cands = gameCandidates(), top = cands.slice(0, 5);
+  const cands = T5 && T5.top && T5.top.games.length ? t5Games() : gameCandidates(), top = cands.slice(0, 5);
   if (!GP) gs.append(el("p", {class:"muted", text:"Sin datos de eficiencia para el modelo de partidos."}));
   else if (!top.length) gs.append(el("p", {class:"muted", text:"No hay partidos próximos con spread y total publicados."}));
   else {
     const g0 = top[0].g, good = top.filter(c => c.p >= BE).length;
-    gs.append(el("p", {class:"chart-desc", text: (good ? `${good} de los 5 superan el umbral` : "Sin ventaja detectada esta semana: ningún pick supera el umbral") +
+    gs.append(el("p", {class:"chart-desc", text: frozenTxt() + (good ? `${good} de los 5 superan el umbral` : "Sin ventaja detectada esta semana: ningún pick supera el umbral") +
       ` (${g0.type === "REG" ? "semana " + g0.week : g0.type} de ${g0.season}). El modelo estima el margen y el total de cada partido; la probabilidad es la tasa de acierto que tuvieron, entre ${GP.from} y ${GP.to}, los picks con una diferencia parecida frente a la línea del mercado.`}));
     const t = el("table", {class:"splits top-t"});
     t.append(el("thead", {}, el("tr", {}, ...["Partido", "Apuesta", "Modelo", "Mercado", "Diferencia", "Prob.", "", ""].map(h => el("th", {text: h})))),
@@ -2510,12 +2572,12 @@ function renderTop() {
   // props
   const ps = el("section", {class:"panel"});
   ps.append(el("h3", {text:"Props de jugadores"}));
-  const oc = oddsCandidates(), fromBooks = oc.length > 0;
+  const oc = T5 && T5.top && T5.top.props.length ? t5Props() : oddsCandidates(), fromBooks = oc.length > 0;
   const pc = fromBooks ? oc : propCandidates().map(c => ({...c, price: -110, be: BE, edge: c.prob - BE})), ptop = pc.slice(0, 5);
   const fetched = ODDS && ODDS.fetched ? new Date(ODDS.fetched).toLocaleString("es", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : null;
   if (!PM) ps.append(el("p", {class:"muted", text:"Sin datos de jugadores para el modelo de props."}));
   else {
-    ps.append(el("p", {class:"chart-desc", text: (fromBooks ? `Líneas reales de ${ODDS.books.length} casas (${ODDS.books.join(", ")}), descargadas el ${fetched}: de cada prop se toma la línea que más casas ofrecen y el mejor momio de cada lado; se evaluaron ${pc.length} props (momios entre −300 y +300, jugadores con ${MIN_GAMES}+ partidos recientes) y se ordenan por ventaja sobre el punto de equilibrio de su momio. La probabilidad es el promedio entre la del modelo y la del mercado (la que implican los momios de over y under sin la comisión de la casa): el modelo no se pudo probar contra líneas de casas, así que el mercado lo modera. ` :
+    ps.append(el("p", {class:"chart-desc", text: (fromBooks ? frozenTxt() : "") + (fromBooks ? `Líneas reales de ${ODDS.books.length} casas (${ODDS.books.join(", ")}), descargadas el ${fetched}: de cada prop se toma la línea que más casas ofrecen y el mejor momio de cada lado; se evaluaron ${(T5 && T5.top && T5.top.evaluated) || pc.length} props (momios entre −300 y +300, jugadores con ${MIN_GAMES}+ partidos recientes) y se ordenan por ventaja sobre el punto de equilibrio de su momio. La probabilidad es el promedio entre la del modelo y la del mercado (la que implican los momios de over y under sin la comisión de la casa): el modelo no se pudo probar contra líneas de casas, así que el mercado lo modera. ` :
       ODDS ? "Las líneas descargadas de las casas ya no tienen partidos pendientes; mientras llega la próxima descarga se usa tu lista. " : "") + (fromBooks ? "" : propsExample() ? "Estas son las props de ejemplo con líneas sugeridas por la pizarra, no de una casa de apuestas: agrega tus props con su línea real en la sección Props de jugadores de la Pizarra. " : `Se calculan sobre las ${currentProps().length} props de tu lista, con la línea que capturaste. `) +
       (fromBooks ? "“Revisar” marca props donde el modelo y el mercado difieren mucho (más de 20 puntos, o una probabilidad casi triple que la otra): casi siempre la casa sabe algo (lesión, cambio de rol, titular que no juega). " : "") + "La probabilidad combina su porcentaje de over en sus últimos 10 y 20 partidos a esa línea, la letra de matchup y el total implícito de su equipo, con pesos ajustados en todos los partidos desde 2021."}));
     if (!ptop.length) ps.append(el("p", {class:"muted", text:"Ninguna prop de tu lista tiene próximo partido y al menos 5 partidos jugados."}));
@@ -2531,7 +2593,7 @@ function renderTop() {
           el("td", {}, matchupPill(c.p, c.mk)),
           el("td", {}, document.createTextNode(fmtPct(c.prob)), el("div", {class:"muted", text: (c.market != null ? `modelo ${fmtPct(c.model)} · mercado ${fmtPct(c.market)} · ` : "") + `equilibrio ${fmtPct(c.be)}`})),
           el("td", {class: c.edge > 0 ? "pos" : "neg", text: signed(c.edge * 100) + " pts"}),
-          el("td", {}, c.review ? el("span", {class:"pill warn", title:"El modelo y el mercado difieren más de 20 puntos: suele significar algo que los datos no ven (lesión, cambio de rol, clima). Revisa noticias antes de apostar.", text:"Revisar"}) : statusPill(c.prob, c.be, "Supera su momio")),
+          el("td", {}, c.outNow ? el("span", {class:"pill l", title:"Según el estado más reciente ya no juega; el pick quedó congelado antes de la noticia y se anulará si no juega.", text:"Ahora fuera"}) : c.review ? el("span", {class:"pill warn", title:"El modelo y el mercado difieren más de 20 puntos: suele significar algo que los datos no ven (lesión, cambio de rol, clima). Revisa noticias antes de apostar.", text:"Revisar"}) : statusPill(c.prob, c.be, "Supera su momio")),
           el("td", {}, betButton("Apostar", () => ({...propDraft(c.p, c.mk, c.line, c.pick), odds: c.price, book: c.book})))))));
       ps.append(el("div", {class:"tbl-wrap"}, labelCells(t)));
     }
@@ -2552,7 +2614,7 @@ function renderTop() {
         el("p", {class:"chart-desc", text:"Cuando un compañero regular (3+ de los últimos 5 partidos) está fuera según el reporte de lesiones, su parte de los envíos o acarreos del equipo queda libre y el resto la absorbe. Sin tomarlo en cuenta el modelo subestimaba el over justo en esos partidos; ahora lo incluye, junto con un ajuste si el jugador está como cuestionable o si falta el QB titular. Los jugadores fuera, dudosos o en la lista de lesionados no aparecen en el Top 5. Estados: reporte oficial de nflverse, actualizado con Sleeper (cambios de último momento, IR y PUP)."})));
     }
   }
-  host.append(gs, ps);
+  host.append(gs, ps, renderTopReview());
   fitTables();
 }
 

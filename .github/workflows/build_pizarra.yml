@@ -14,7 +14,9 @@ on:
       - ".github/workflows/build_pizarra.yml"
 
 name: Build Pizarra NFL dashboard
-permissions: read-all
+# contents: write lets builds of master push newly frozen Top 5 picks to the odds-data branch
+permissions:
+  contents: write
 
 jobs:
   build_pizarra:
@@ -31,20 +33,42 @@ jobs:
       - name: Install nflreadpy
         run: pip install "nflreadpy>=0.1.5,<0.2"
 
-      # prop lines saved by the "Fetch NFL odds" workflow on the odds-data branch (optional)
-      - name: Get the latest odds snapshot
+      # prop lines (saved by the "Fetch NFL odds" workflow) and frozen Top 5 picks live on the
+      # odds-data branch; both are optional
+      - name: Get the odds-data branch
         run: |
           if git fetch --depth 1 origin odds-data; then
-            git show FETCH_HEAD:nfl_odds.json > "$RUNNER_TEMP/nfl_odds.json"
+            git worktree add --detach "$RUNNER_TEMP/odds-data" FETCH_HEAD
           else
-            echo "No odds snapshot yet"
+            mkdir -p "$RUNNER_TEMP/odds-data"
+            echo "No odds-data branch yet"
           fi
 
       - name: Build dashboard
         run: |
-          odds=()
-          if [ -s "$RUNNER_TEMP/nfl_odds.json" ]; then odds=(--odds "$RUNNER_TEMP/nfl_odds.json"); fi
-          python3 code/pizarra/build_pizarra.py -o pizarra-nfl.html "${odds[@]}"
+          d="$RUNNER_TEMP/odds-data"
+          args=(--picks-dir "$d/picks")
+          if [ -s "$d/nfl_odds.json" ]; then args+=(--odds "$d/nfl_odds.json"); fi
+          # only builds of master freeze picks (they are pushed back below)
+          if [ "${{ github.ref }}" != "refs/heads/master" ]; then args+=(--no-freeze); fi
+          python3 code/pizarra/build_pizarra.py -o pizarra-nfl.html "${args[@]}"
+
+      - name: Save newly frozen Top 5 picks
+        if: github.ref == 'refs/heads/master'
+        run: |
+          cd "$RUNNER_TEMP/odds-data"
+          git rev-parse --is-inside-work-tree > /dev/null 2>&1 || exit 0
+          [ -d picks ] || exit 0
+          git add picks
+          git diff --cached --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qm "Freeze Top 5 picks $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3; do
+            git push origin HEAD:odds-data && exit 0
+            git pull --rebase -q origin odds-data
+          done
+          exit 1
 
       - name: Upload dashboard
         uses: actions/upload-artifact@v4

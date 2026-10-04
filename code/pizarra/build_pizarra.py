@@ -1244,6 +1244,320 @@ def build_odds(path, games, names, pdata):
     return {"fetched": snap.get("fetched"), "books": books, "p": rows, "remaining": snap.get("remaining")} if rows else None
 
 
+# ---------- Top 5 of the week: frozen picks and the review of last week's ----------
+# The page shows the picks computed here. The first build with sportsbook lines for a week
+# freezes them in --picks-dir (the odds-data branch); later builds show the frozen picks, and
+# once a frozen week is over they are graded from the data with a short analysis of each.
+TOP_N, TOP_MIN_GAMES, TOP_PRICES = 5, 8, (-300, 300)
+MODEL_W, ONE_SIDED_MARGIN, REVIEW_GAP, REVIEW_LOGIT = 0.5, 1.045, 0.2, 1.0
+
+
+def break_even(o):
+    return -o / (-o + 100) if o < 0 else 100 / (o + 100)
+
+
+def game_key(g):
+    """Stable identity of a game across builds: [season, type, week, away, home] (franchises)."""
+    return [g[0], g[1], g[2], FRANCHISE.get(g[4], g[4]), FRANCHISE.get(g[6], g[6])]
+
+
+class Board:
+    """What the page knows before kickoff, rebuilt in Python: each player's games, each team's
+    next game and the matchup letter of each defense (its last 10 games, as the page computes)."""
+
+    def __init__(self, games, pdata):
+        self.games, self.pdata, fr = games, pdata, lambda t: FRANCHISE.get(t, t)
+        self.rows = {}
+        for r in pdata["r"]:
+            self.rows.setdefault(r[0], []).append(r)
+        for v in self.rows.values():
+            v.sort(key=lambda r: games[r[1]][3])
+        self.team = {pi: v[-1][2] for pi, v in self.rows.items()}
+        last_played = max(g[3] for g in games if g[7] is not None)
+        self.next = {}
+        for gi, g in enumerate(games):
+            if g[7] is None and g[3] >= last_played:
+                for t in (fr(g[4]), fr(g[6])):
+                    if t not in self.next or g[3] < games[self.next[t]][3]:
+                        self.next[t] = gi
+        # defenses: production allowed by position over their last 10 played games
+        by_t = {}
+        for gi, g in enumerate(games):
+            if g[7] is not None and g[0] >= PLAYER_FIRST_SEASON:
+                for t in (fr(g[4]), fr(g[6])):
+                    by_t.setdefault(t, []).append(gi)
+        sets = {t: set(sorted(v, key=lambda gi: games[gi][3])[-10:]) for t, v in by_t.items()}
+        allowed = {t: {} for t in sets}
+        pos = [p[2] for p in pdata["pl"]]
+        for r in pdata["r"]:
+            t = fr(r[3])
+            if r[1] in sets.get(t, ()):
+                acc = allowed[t].setdefault(pos[r[0]], dict.fromkeys(STAT_COLS, 0))
+                for c, v in zip(STAT_COLS, r[4:4 + len(STAT_COLS)]):
+                    acc[c] += v
+        self.grades = {}
+        zero = dict.fromkeys(STAT_COLS, 0)
+        for m, (poss, f) in MARKETS.items():
+            for p in poss:
+                vals = sorted(((f(allowed[t].get(p, zero)) / len(s), t) for t, s in sets.items() if len(s) >= 4), key=lambda x: x[0])
+                for i, (_, t) in enumerate(vals):
+                    self.grades[(t, m, p)] = grade_of(i + 1, len(vals))
+
+    def next_game(self, pi):
+        t = self.team.get(pi)
+        return None if t is None else self.next.get(FRANCHISE.get(t, t))
+
+
+def build_top5(data, board):
+    """This week's Top 5: spread/total picks from the game model and prop picks from the
+    sportsbook lines, as plain records with stable game and player ids."""
+    games, gp, pm, odds, pdata = data["g"], data["gp"], data["mv"]["pm"], data["odds"], data["p"]
+    fr = lambda t: FRANCHISE.get(t, t)
+    out = {"games": [], "props": []}
+    if gp:
+        rate = lambda kind, e: gp["bt"][kind][max(i for i, lo in enumerate(gp["b"]) if abs(e) >= lo)]
+        cands = []
+        for gi, pm_, pt, *_ in gp["g"]:
+            g = games[gi]
+            if g[7] is not None or g[8] is None or g[9] is None:
+                continue
+            se, te = pm_ - g[8], pt - g[9]
+            for kind, e, pick, line in (("spread", se, fr(g[6]) if se > 0 else fr(g[4]), -g[8] if se > 0 else g[8]),
+                                        ("total", te, "over" if te > 0 else "under", g[9])):
+                n, w = rate("sp" if kind == "spread" else "tot", e)
+                if n:
+                    cands.append({"game": game_key(g), "kind": kind, "pick": pick, "line": line, "odds": -110,
+                                  "prob": round(w / n, 4), "n": n, "edge": round(abs(e), 1), "model": round(pm_ if kind == "spread" else pt, 1)})
+        out["games"] = sorted(cands, key=lambda c: (-c["prob"], -c["edge"]))[:TOP_N]
+    if odds and pm:
+        inj, ctxs, cands = pdata["inj"], pm.get("ctx", {}), []
+        sig = lambda z: 1 / (1 + math.exp(-z))
+        for gi, pi, mk, line, op, ob, up, ub, nb in odds["p"]:
+            g = games[gi]
+            if g[7] is not None or board.next_game(pi) != gi or (inj.get(pi) or [None])[0] in OUT_STATUSES:
+                continue
+            pos, f = pdata["pl"][pi][2], MARKETS[mk][1]
+            rows = board.rows.get(pi, [])
+            v20 = [f(dict(zip(STAT_COLS, r[4:4 + len(STAT_COLS)]))) for r in rows[-20:]]
+            v10 = v20[-10:]
+            if len(v10) < TOP_MIN_GAMES:
+                continue
+            team = fr(board.team[pi])
+            opp = fr(g[4]) if fr(g[6]) == team else fr(g[6])
+            grade = board.grades.get((opp, mk, pos), "")
+            tl = None if g[8] is None else (-g[8] if fr(g[6]) == team else g[8])
+            implied = None if tl is None or g[9] is None else g[9] / 2 - tl / 2
+            ctx = ctxs.get(pi) or [0, 0, 0, 0, []]
+            x = prop_features(v10, v20, line, grade, implied) + vacated_for(mk, pos, ctx)
+            p_over = sig(sum(a * c for a, c in zip(x, pm["coef"][PROP_FAMILY[mk]])))
+            m_over = (break_even(op) / (break_even(op) + break_even(up)) if op is not None and up is not None
+                      else break_even(op) / ONE_SIDED_MARGIN if op is not None else 1 - break_even(up) / ONE_SIDED_MARGIN)
+            blend = MODEL_W * p_over + (1 - MODEL_W) * m_over
+            sides = []
+            for pick, price, book, prob, model, market in (("over", op, ob, blend, p_over, m_over), ("under", up, ub, 1 - blend, 1 - p_over, 1 - m_over)):
+                if price is not None and TOP_PRICES[0] <= price <= TOP_PRICES[1]:
+                    sides.append({"pick": pick, "odds": price, "book": odds["books"][book], "prob": prob, "model": model, "market": market,
+                                  "be": break_even(price), "edge": prob - break_even(price)})
+            if not sides:
+                continue
+            s = max(sides, key=lambda x: x["edge"])
+            lgt = lambda p: math.log(p / (1 - p))
+            review = abs(s["model"] - s["market"]) > REVIEW_GAP or abs(lgt(s["model"]) - lgt(s["market"])) > REVIEW_LOGIT
+            o10, o20 = sum(v > line for v in v10), sum(v > line for v in v20)
+            cands.append({"game": game_key(g), "kind": "prop", "pid": pdata["pl"][pi][0], "pname": pdata["pl"][pi][1], "pos": pos,
+                          "team": board.team[pi], "market": mk, "line": line, "pick": s["pick"], "odds": s["odds"], "book": s["book"], "books": nb,
+                          "prob": round(s["prob"], 4), "model": round(s["model"], 4), "market_p": round(s["market"], 4), "be": round(s["be"], 4),
+                          "edge": round(s["edge"], 4), "review": review, "grade": grade,
+                          "o10": o10 if s["pick"] == "over" else len(v10) - o10, "n10": len(v10),
+                          "o20": o20 if s["pick"] == "over" else len(v20) - o20, "n20": len(v20),
+                          "vac": round(vacated_for(mk, pos, ctx)[0], 3)})
+        out["props"] = sorted(cands, key=lambda c: (c["review"], -c["edge"]))[:TOP_N]
+        out["evaluated"] = len(cands)
+    picks = out["games"] + out["props"]
+    if not picks:
+        return None
+    first = min((p["game"] for p in picks), key=lambda k: (k[0], k[1] != "REG", k[2]))
+    out["week"] = first[:3]
+    return out
+
+
+def find_game(games, key):
+    for gi, g in enumerate(games):
+        if g[0] == key[0] and g[1] == key[1] and g[2] == key[2] and FRANCHISE.get(g[4], g[4]) == key[3] and FRANCHISE.get(g[6], g[6]) == key[4]:
+            return gi
+    return None
+
+
+def week_file(week):
+    return f"{week[0]}-{week[1]}-{int(week[2]):02d}.json"
+
+
+def load_frozen(picks_dir):
+    """All frozen weeks in the directory: {(season, type, week): snapshot}."""
+    out = {}
+    if picks_dir and picks_dir.is_dir():
+        for f in sorted(picks_dir.glob("*.json")):
+            try:
+                snap = json.loads(f.read_text(encoding="utf-8"))
+                out[tuple(snap["week"])] = snap
+            except (ValueError, KeyError) as e:
+                print(f"Skipping frozen picks {f.name}: {e}")
+    return out
+
+
+def grade_pick(p, games, pdata, eff, board):
+    """[status, analysis] of a frozen pick once its game is played, or None. Status: won, lost,
+    push or void; the analysis says what happened and why the pick did or didn't land."""
+    gi = find_game(games, p["game"])
+    if gi is None or games[gi][7] is None:
+        return None
+    g = games[gi]
+    fr = lambda t: FRANCHISE.get(t, t)
+    h, a, hs, as_ = fr(g[6]), fr(g[4]), g[7], g[5]
+    num = lambda v, d=1: f"{v:.{d}f}".replace(".", ",").replace("-", "−")
+    if p["kind"] in ("spread", "total"):
+        epa = {}
+        for t in (h, a):
+            r = next((r for r in eff if r[0] == gi and fr(r[1]) == t), None)
+            prev = [r2 for r2 in eff if fr(r2[1]) == t and games[r2[0]][3] < g[3]][-10:]
+            if r and prev and (r[2] + r[5]) and sum(x[2] + x[5] for x in prev):
+                epa[t] = ((r[3] + r[6]) / (r[2] + r[5]), sum(x[3] + x[6] for x in prev) / sum(x[2] + x[5] for x in prev))
+        epa_txt = " ".join(f"Ofensiva de {t}: EPA por jugada {num(v[0], 2)} contra {num(v[1], 2)} de promedio" +
+                           (" (muy por debajo)." if v[0] < v[1] - 0.12 else " (muy por encima)." if v[0] > v[1] + 0.12 else ".") for t, v in epa.items())
+        if p["kind"] == "spread":
+            mine, other = (hs, as_) if p["pick"] == h else (as_, hs)
+            margin = mine - other
+            res = margin + p["line"]
+            status = "push" if res == 0 else "won" if res > 0 else "lost"
+            fav = p["model"] if p["pick"] == h else -p["model"]
+            txt = (f"Resultado {a} {as_}-{hs} {h}: {p['pick']} {'ganó' if margin > 0 else 'perdió' if margin < 0 else 'empató'} por {abs(margin)}; "
+                   f"con la línea {num(p['line'])} {'cubrió por ' + num(res) if res > 0 else 'quedó a ' + num(-res) + ' de cubrir' if res < 0 else 'fue push'}. "
+                   f"El modelo esperaba a {p['pick']} {'ganando' if fav > 0 else 'perdiendo'} por {num(abs(fav))}. ")
+        else:
+            tot = hs + as_
+            res = tot - p["line"] if p["pick"] == "over" else p["line"] - tot
+            status = "push" if res == 0 else "won" if res > 0 else "lost"
+            txt = (f"Total de {tot} puntos ({a} {as_}-{hs} {h}) contra la línea {num(p['line'])} y {num(p['model'])} del modelo: "
+                   f"{'acertó por ' + num(res) if res > 0 else 'falló por ' + num(-res) if res < 0 else 'push'}. ")
+        off = {t: v[0] - v[1] for t, v in epa.items()}
+        if p["kind"] == "spread":
+            rival = a if p["pick"] == h else h
+            cause = ("ofensiva propia por debajo" if off.get(p["pick"], 0) < -0.12 else "rival por encima de su nivel" if off.get(rival, 0) > 0.12
+                     else "ofensiva propia por encima" if off.get(p["pick"], 0) > 0.12 else "rival por debajo de su nivel" if off.get(rival, 0) < -0.12 else "partido parejo al modelo")
+        else:
+            cause = ("ofensivas por debajo" if off and min(off.values()) < -0.12 else "ofensivas por encima" if off and max(off.values()) > 0.12 else "partido parejo al modelo")
+        return [status, txt + epa_txt, cause]
+    # props
+    pi = next((i for i, pl in enumerate(pdata["pl"]) if pl[0] == p["pid"]), None)
+    row = next((r for r in board.rows.get(pi, []) if r[1] == gi), None) if pi is not None else None
+    if row is None:
+        return ["void", "No jugó: la apuesta se anula.", "no jugó"]
+    f = MARKETS[p["market"]][1]
+    stat = lambda r: dict(zip(STAT_COLS, r[4:4 + len(STAT_COLS)]))
+    v = f(stat(row))
+    res = v - p["line"] if p["pick"] == "over" else p["line"] - v
+    status = "push" if res == 0 else "won" if res > 0 else "lost"
+    prev = [r for r in board.rows[pi] if games[r[1]][3] < g[3]][-10:]
+    avg = lambda c: sum(stat(r)[c] for r in prev) / len(prev) if prev else 0
+    snaps = [r[6 + len(STAT_COLS)] for r in prev if r[6 + len(STAT_COLS)] is not None]
+    snap, snap_avg = row[6 + len(STAT_COLS)], (sum(snaps) / len(snaps) if snaps else None)
+    vol_col = "attempts" if p["pos"] == "QB" else "carries" if p["market"] in ("rushing_yards", "carries") else "targets"
+    vol, vol_avg = stat(row)[vol_col], avg(vol_col)
+    vol_name = {"attempts": ("pase", "pases"), "carries": ("acarreo", "acarreos"), "targets": ("envío", "envíos")}[vol_col][vol != 1]
+    team = fr(row[2])
+    mine, other = (hs, as_) if team == h else (as_, hs)
+    parts = [f"{v} {MARKET_ES.get(p['market'], p['market'])} contra la línea {num(p['line'])}: "
+             f"{'acertó' if status == 'won' else 'falló' if status == 'lost' else 'push'}" + (f" por {num(abs(res))}" if res else "") + "."]
+    usage = f"{vol} {vol_name} (promedio {num(vol_avg)})" + (f", {snap}% de snaps (promedio {num(snap_avg, 0)}%)" if snap is not None and snap_avg else "")
+    low_snaps = snap is not None and snap_avg and snap < 0.75 * snap_avg
+    vol_ratio = vol / vol_avg if vol_avg else 1
+    went_over = (status == "won") == (p["pick"] == "over")  # the stat beat the line
+    if low_snaps:
+        why, cause = f"Jugó menos de lo normal: {usage}.", "snaps"
+    elif vol_ratio < 0.75:
+        why, cause = f"Tuvo menos volumen del esperado: {usage}.", "volumen bajo"
+    elif vol_ratio > 1.25:
+        why, cause = f"Tuvo más volumen del esperado: {usage}.", "volumen alto"
+    else:
+        why, cause = f"Volumen normal: {usage}; la diferencia vino de la eficiencia.", "eficiencia"
+    # game script, only when it pushes the stat the way it went: trailing teams pass more,
+    # leading teams run more
+    script = ""
+    if abs(mine - other) >= 14 and p["market"] not in ("anytime_td", "interceptions"):
+        rushing = p["market"] in ("rushing_yards", "carries")
+        helps = (mine > other) == rushing
+        if helps == (v > p["line"]):
+            script = f" Guion del partido: {team} {'ganó' if mine > other else 'perdió'} {mine}-{other}; " + (
+                "al ir abajo se pasa más y se corre menos." if mine < other else "al ir arriba se corre más y se pasa menos.")
+            if status == "lost":
+                cause = "guion del partido"
+    inj = ""
+    if p.get("vac", 0) > 0.1:
+        inj = f" Se esperaba más volumen por compañeros fuera ({round(p['vac'] * 100)}% del equipo)" + (
+            "; sí lo absorbió." if vol_ratio > 1.1 else "; no lo absorbió.")
+    verdict = (f" Al congelarla: probabilidad {round(p['prob'] * 100)}% (modelo {round(p.get('model', p['prob']) * 100)}%, "
+               f"mercado {round(p.get('market_p', p['prob']) * 100)}%)" + (f", letra de matchup {p['grade']}" if p.get("grade") else "") + ".")
+    return [status, " ".join([parts[0], why]) + script + inj + verdict, cause]
+
+
+MARKET_ES = {"passing_yards": "yardas de pase", "passing_tds": "TD de pase", "completions": "pases completos", "attempts": "intentos de pase",
+             "interceptions": "intercepciones", "pass_rush": "yardas de pase + tierra", "rushing_yards": "yardas por tierra",
+             "carries": "acarreos", "receptions": "recepciones", "receiving_yards": "yardas de recepción",
+             "rush_rec": "yardas tierra + recepción", "anytime_td": "TD"}
+
+
+def build_top5_section(data, picks_dir, freeze):
+    """The page's Top 5 (frozen if this week's picks exist, else computed and, with --picks-dir,
+    frozen when they include sportsbook props), the review of the latest finished frozen week,
+    and the record of every frozen week so far."""
+    games, pdata = data["g"], data["p"]
+    board = Board(games, pdata)
+    frozen = load_frozen(picks_dir)
+    top = build_top5(data, board)
+    if top:
+        wk = tuple(top["week"])
+        if wk in frozen:
+            top = frozen[wk]
+            top["frozen"] = True
+        elif freeze and picks_dir and top["props"]:
+            top["made"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+            picks_dir.mkdir(parents=True, exist_ok=True)
+            (picks_dir / week_file(wk)).write_text(json.dumps(top, ensure_ascii=False, indent=1), encoding="utf-8")
+            frozen[wk] = top
+            top["frozen"] = True
+            print(f"Froze Top 5 for {wk} in {picks_dir / week_file(wk)}")
+    # grade every frozen week; the latest one whose picks are all decided is "last week"
+    record, last = {"games": [0, 0, 0, 0.0, 0.0], "props": [0, 0, 0, 0.0, 0.0]}, None  # won, lost, push, profit per $1, sum prob
+    for wk in sorted(frozen, key=lambda k: (k[0], k[1] != "REG", k[2])):
+        snap, graded, done = frozen[wk], {"games": [], "props": []}, True
+        for side in ("games", "props"):
+            for p in snap.get(side, []):
+                r = grade_pick(p, games, pdata, data["e"] or [], board)
+                if r is None:
+                    done = False
+                graded[side].append({**p, "status": r[0] if r else "pending", "why": r[1] if r else "", "cause": r[2] if r else ""})
+        if not done:
+            continue
+        for side in ("games", "props"):
+            for p in graded[side]:
+                c = record[side]
+                if p["status"] in ("won", "lost", "push"):
+                    c[{"won": 0, "lost": 1, "push": 2}[p["status"]]] += 1
+                if p["status"] in ("won", "lost"):
+                    c[3] += (100 / abs(p["odds"]) if p["odds"] < 0 else p["odds"] / 100) if p["status"] == "won" else -1
+                    c[4] += p["prob"]
+        last = {"week": list(wk), "made": snap.get("made"), **graded}
+    weeks = sum(1 for wk in frozen if last and wk <= tuple(last["week"]))
+    if top:
+        # flag frozen props whose player is out now (the snapshot can't know later news)
+        for p in top.get("props", []):
+            pi = next((i for i, pl in enumerate(pdata["pl"]) if pl[0] == p.get("pid")), None)
+            p["outNow"] = pi is not None and (pdata["inj"].get(pi) or [None])[0] in OUT_STATUSES
+    print(f"Top 5: {'frozen' if top and top.get('frozen') else 'live'} picks for {top and top['week']}; "
+          f"review of {last and last['week']}; record {record}")
+    return {"top": top, "review": last, "record": {k: [round(x, 3) for x in v] for k, v in record.items()}, "weeks": weeks}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-o", "--output", type=Path, default=HERE / "pizarra-nfl.html")
@@ -1251,6 +1565,8 @@ def main():
                     help="skip all nflverse downloads: local CSVs only, no player/ranking/EPA sections")
     ap.add_argument("--odds", type=Path, help="prop lines snapshot from fetch_odds.py (optional)")
     ap.add_argument("--no-sleeper", action="store_true", help="don't overlay Sleeper's current injury statuses")
+    ap.add_argument("--picks-dir", type=Path, help="frozen weekly Top 5 picks (read, and the current week written once it has prop lines)")
+    ap.add_argument("--no-freeze", action="store_true", help="read frozen picks but never write new ones")
     args = ap.parse_args()
 
     data, game_index = build_data(remote=not args.no_players)
@@ -1278,6 +1594,7 @@ def main():
         data["mv"]["pm"]["ctx"] = props.current(data["p"], data["p"]["inj"])
     data["gp"] = build_game_picks(data["g"], data["e"]) if data["e"] else None
     data["odds"] = build_odds(args.odds, data["g"], data["n"], data["p"]) if args.odds and data["p"] else None
+    data["t5"] = build_top5_section(data, args.picks_dir, not args.no_freeze) if data["p"] and data["mv"] else None
     data["z"] = detail.page_data(data["p"]) if detail else None
     template = (HERE / "pizarra_template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
