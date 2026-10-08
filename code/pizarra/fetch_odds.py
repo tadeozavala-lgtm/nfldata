@@ -19,6 +19,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,13 +29,25 @@ DEFAULT_MARKETS = ("player_pass_yds,player_pass_tds,player_rush_yds,"
                    "player_receptions,player_reception_yds,player_anytime_td")
 
 
-def get(path, **params):
-    """GET an API path; returns (parsed JSON, remaining credits or None)."""
+def get(path, tries=4, **params):
+    """GET an API path; returns (parsed JSON, remaining credits or None). Server errors (5xx)
+    and dropped connections are retried with backoff (5, 15, 45 s); 4xx errors are not."""
     url = f"{API}{path}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={"User-Agent": "pizarra-nfl"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        left = r.headers.get("x-requests-remaining")
-        return json.load(r), None if left is None else int(float(left))
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                left = r.headers.get("x-requests-remaining")
+                return json.load(r), None if left is None else int(float(left))
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == tries - 1:
+                raise
+            print(f"HTTP {e.code} from The Odds API; retrying")
+        except urllib.error.URLError as e:
+            if attempt == tries - 1:
+                raise
+            print(f"Connection problem ({e.reason}); retrying")
+        time.sleep(5 * 3 ** attempt)
 
 
 def main():

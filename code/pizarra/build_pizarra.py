@@ -290,7 +290,8 @@ def build_efficiency(game_index, on_season=None):
             plays = plays.filter(pl.col("two_point_attempt").fill_null(0) == 0)
         dropback, run = pl.col("pass") == 1, pl.col("rush") == 1
         third = pl.col("down") == 3
-        neutral = pl.col("down").is_in([1, 2]) & pl.col("wp").is_between(0.2, 0.8) & pl.col("pass_oe").is_not_null()
+        # down is a float column; polars 2 no longer compares it with a list of ints in is_in
+        neutral = ((pl.col("down") == 1) | (pl.col("down") == 2)) & pl.col("wp").is_between(0.2, 0.8) & pl.col("pass_oe").is_not_null()
         agg = plays.group_by(["game_id", "posteam"]).agg(
             dropback.sum().alias("pn"), pl.col("epa").filter(dropback).sum().alias("pe"),
             pl.col("success").filter(dropback).sum().alias("ps"),
